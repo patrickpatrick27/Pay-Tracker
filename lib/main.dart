@@ -36,7 +36,7 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
       use24HourFormat = prefs.getBool(kSetting24h) ?? false;
-      isDarkMode = prefs.getBool(kSettingDarkMode) ?? false; 
+      isDarkMode = prefs.getBool(kSettingDarkMode) ?? false;
     });
   }
 
@@ -58,7 +58,7 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
       debugShowCheckedModeBanner: false,
       title: 'Pay Tracker Pro',
       themeMode: isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      
+
       // --- LIGHT THEME (Clean Indigo) ---
       theme: ThemeData(
         useMaterial3: true,
@@ -91,7 +91,7 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
           onSurface: Colors.white,
           background: Color(0xFF121212), // Pure Black BG
         ),
-        scaffoldBackgroundColor: const Color(0xFF121212), 
+        scaffoldBackgroundColor: const Color(0xFF121212),
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1E1E1E),
           foregroundColor: Colors.white,
@@ -138,7 +138,7 @@ TimeOfDay roundTime(TimeOfDay time, {required bool isStart}) {
 
   int h = (roundedMinutes ~/ 60) % 24;
   int m = roundedMinutes % 60;
-  
+
   if (isStart && h < 8) {
     return const TimeOfDay(hour: 8, minute: 0);
   }
@@ -159,7 +159,7 @@ class Shift {
   DateTime date;
   TimeOfDay rawTimeIn;
   TimeOfDay rawTimeOut;
-  bool isManualPay; 
+  bool isManualPay;
   double manualAmount;
 
   Shift({
@@ -190,21 +190,22 @@ class Shift {
       id: json['id'],
       date: DateTime.parse(json['date']),
       rawTimeIn: TimeOfDay(hour: int.parse(tIn[0]), minute: int.parse(tIn[1])),
-      rawTimeOut: TimeOfDay(hour: int.parse(tOut[0]), minute: int.parse(tOut[1])),
+      rawTimeOut:
+          TimeOfDay(hour: int.parse(tOut[0]), minute: int.parse(tOut[1])),
       isManualPay: json['isManualPay'] ?? false,
       manualAmount: (json['manualAmount'] ?? 0.0).toDouble(),
     );
   }
 
   double get hoursWorked {
-    if (isManualPay) return 0; 
+    if (isManualPay) return 0;
 
     double start = paidTimeIn.hour + paidTimeIn.minute / 60.0;
     double end = paidTimeOut.hour + paidTimeOut.minute / 60.0;
-    if (end < start) end += 24; 
+    if (end < start) end += 24;
 
     double duration = end - start;
-    if (start <= 12.0 && end >= 13.0) duration -= 1.0; 
+    if (start <= 12.0 && end >= 13.0) duration -= 1.0;
 
     return duration > 0 ? duration : 0;
   }
@@ -218,7 +219,7 @@ class PayPeriod {
   String name;
   DateTime start;
   DateTime end;
-  DateTime lastEdited; 
+  DateTime lastEdited;
   double hourlyRate;
   List<Shift> shifts;
 
@@ -248,7 +249,9 @@ class PayPeriod {
       name: json['name'],
       start: DateTime.parse(json['start']),
       end: DateTime.parse(json['end']),
-      lastEdited: json['lastEdited'] != null ? DateTime.parse(json['lastEdited']) : DateTime.now(),
+      lastEdited: json['lastEdited'] != null
+          ? DateTime.parse(json['lastEdited'])
+          : DateTime.now(),
       hourlyRate: json['hourlyRate'].toDouble(),
       shifts: (json['shifts'] as List).map((s) => Shift.fromJson(s)).toList(),
     );
@@ -256,13 +259,13 @@ class PayPeriod {
 
   double get totalRegularHours {
     double sum = 0;
-    for (var shift in shifts) if(!shift.isManualPay) sum += shift.regularHours;
+    for (var shift in shifts) if (!shift.isManualPay) sum += shift.regularHours;
     return sum;
   }
 
   double get totalOvertimeHours {
     double sum = 0;
-    for (var shift in shifts) if(!shift.isManualPay) sum += shift.overtimeHours;
+    for (var shift in shifts) if (!shift.isManualPay) sum += shift.overtimeHours;
     return sum;
   }
 
@@ -272,136 +275,160 @@ class PayPeriod {
       if (shift.isManualPay) {
         total += shift.manualAmount;
       } else {
-        total += (shift.regularHours * hourlyRate) + 
-                 (shift.overtimeHours * hourlyRate * 1.25);
+        total += (shift.regularHours * hourlyRate) +
+            (shift.overtimeHours * hourlyRate * 1.25);
       }
     }
     return total;
   }
-  
+
   void updateName() {
-    name = "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}";
+    name =
+        "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}";
   }
 }
 
 // --- MODERN PICKERS ---
 
-Future<DateTime?> showFastDatePicker(BuildContext context, DateTime initial, {DateTime? minDate, DateTime? maxDate}) async {
+Future<DateTime?> showFastDatePicker(BuildContext context, DateTime initial,
+    {DateTime? minDate, DateTime? maxDate}) async {
   playClickSound(context);
   DateTime safeInitial = initial;
   if (minDate != null && initial.isBefore(minDate)) safeInitial = minDate;
   if (maxDate != null && initial.isAfter(maxDate)) safeInitial = maxDate;
 
   DateTime tempDate = safeInitial;
-  
+
   final bool isDark = Theme.of(context).brightness == Brightness.dark;
   final Color bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
   final Color text = isDark ? Colors.white : Colors.black;
 
   return showModalBottomSheet<DateTime>(
-    context: context,
-    backgroundColor: bg,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (BuildContext builder) {
-      return SizedBox(
-        height: 280, // Slightly reduced height to keep compact
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  TextButton(child: const Text('Cancel', style: TextStyle(color: Colors.red)), onPressed: () => Navigator.of(context).pop()),
-                  Text("Select Date", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: text)),
-                  TextButton(
-                    child: const Text('Confirm', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)), 
-                    onPressed: () {
-                      playClickSound(context);
-                      Navigator.of(context).pop(tempDate);
-                    }
+      context: context,
+      backgroundColor: bg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (BuildContext builder) {
+        return SizedBox(
+          height: 280,
+          child: Column(
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                        child: const Text('Cancel',
+                            style: TextStyle(color: Colors.red)),
+                        onPressed: () => Navigator.of(context).pop()),
+                    Text("Select Date",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: text)),
+                    TextButton(
+                        child: const Text('Confirm',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue)),
+                        onPressed: () {
+                          playClickSound(context);
+                          Navigator.of(context).pop(tempDate);
+                        }),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoTheme(
+                  data: CupertinoThemeData(
+                    brightness: isDark ? Brightness.dark : Brightness.light,
+                    primaryColor: Colors.blue,
                   ),
-                ],
-              ),
-            ),
-            Expanded(
-              // FIX: Clean CupertinoTheme without customTextStyle avoids "squished" rendering
-              child: CupertinoTheme(
-                data: CupertinoThemeData(
-                  brightness: isDark ? Brightness.dark : Brightness.light,
-                  primaryColor: Colors.blue,
-                ),
-                child: CupertinoDatePicker(
-                  mode: CupertinoDatePickerMode.date,
-                  initialDateTime: safeInitial,
-                  minimumDate: minDate ?? DateTime(2020),
-                  maximumDate: maxDate ?? DateTime(2030),
-                  onDateTimeChanged: (DateTime newDate) => tempDate = newDate,
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.date,
+                    initialDateTime: safeInitial,
+                    minimumDate: minDate ?? DateTime(2020),
+                    maximumDate: maxDate ?? DateTime(2030),
+                    onDateTimeChanged: (DateTime newDate) => tempDate = newDate,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-  );
+            ],
+          ),
+        );
+      });
 }
 
-Future<TimeOfDay?> showFastTimePicker(BuildContext context, TimeOfDay initial, bool use24h) async {
+Future<TimeOfDay?> showFastTimePicker(
+    BuildContext context, TimeOfDay initial, bool use24h) async {
   playClickSound(context);
-  
+
   final now = DateTime.now();
-  DateTime tempDate = DateTime(now.year, now.month, now.day, initial.hour, initial.minute);
+  DateTime tempDate =
+      DateTime(now.year, now.month, now.day, initial.hour, initial.minute);
 
   final bool isDark = Theme.of(context).brightness == Brightness.dark;
   final Color bg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
   final Color text = isDark ? Colors.white : Colors.black;
 
   return showModalBottomSheet<TimeOfDay>(
-    context: context,
-    backgroundColor: bg,
-    shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-    builder: (BuildContext builder) {
-      return SizedBox(
-        height: 280,
-        child: Column(
-          children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  TextButton(child: const Text('Cancel', style: TextStyle(color: Colors.red)), onPressed: () => Navigator.of(context).pop()),
-                  Text("Select Time", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: text)),
-                  TextButton(
-                    child: const Text('Confirm', style: TextStyle(fontWeight: FontWeight.bold, color: Colors.blue)), 
-                    onPressed: () {
-                       playClickSound(context);
-                       Navigator.of(context).pop(TimeOfDay.fromDateTime(tempDate));
-                    }
+      context: context,
+      backgroundColor: bg,
+      shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (BuildContext builder) {
+        return SizedBox(
+          height: 280,
+          child: Column(
+            children: [
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    TextButton(
+                        child: const Text('Cancel',
+                            style: TextStyle(color: Colors.red)),
+                        onPressed: () => Navigator.of(context).pop()),
+                    Text("Select Time",
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 16,
+                            color: text)),
+                    TextButton(
+                        child: const Text('Confirm',
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                color: Colors.blue)),
+                        onPressed: () {
+                          playClickSound(context);
+                          Navigator.of(context)
+                              .pop(TimeOfDay.fromDateTime(tempDate));
+                        }),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: CupertinoTheme(
+                  data: CupertinoThemeData(
+                    brightness: isDark ? Brightness.dark : Brightness.light,
+                    primaryColor: Colors.blue,
                   ),
-                ],
-              ),
-            ),
-            Expanded(
-              child: CupertinoTheme(
-                data: CupertinoThemeData(
-                  brightness: isDark ? Brightness.dark : Brightness.light,
-                  primaryColor: Colors.blue,
-                ),
-                child: CupertinoDatePicker(
-                  mode: CupertinoDatePickerMode.time,
-                  initialDateTime: tempDate,
-                  use24hFormat: use24h,
-                  onDateTimeChanged: (DateTime newDate) => tempDate = newDate,
+                  child: CupertinoDatePicker(
+                    mode: CupertinoDatePickerMode.time,
+                    initialDateTime: tempDate,
+                    use24hFormat: use24h,
+                    onDateTimeChanged: (DateTime newDate) => tempDate = newDate,
+                  ),
                 ),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-  );
+            ],
+          ),
+        );
+      });
 }
 
 // --- SCREEN 1: DASHBOARD ---
@@ -411,13 +438,13 @@ class PayPeriodListScreen extends StatefulWidget {
   final bool isDarkMode;
   final Function(bool) onToggleFormat;
   final Function(bool) onToggleDarkMode;
-  
+
   const PayPeriodListScreen({
-    super.key, 
-    required this.use24HourFormat, 
+    super.key,
+    required this.use24HourFormat,
     required this.isDarkMode,
     required this.onToggleFormat,
-    required this.onToggleDarkMode
+    required this.onToggleDarkMode,
   });
 
   @override
@@ -460,38 +487,47 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     for (var p in periods) {
       sb.writeln("${p.name} (Total: ₱ ${currency.format(p.totalPay)})");
       List<Shift> sortedShifts = List.from(p.shifts);
-      sortedShifts.sort((a,b) => a.date.compareTo(b.date));
+      sortedShifts.sort((a, b) => a.date.compareTo(b.date));
 
       for (var s in sortedShifts) {
         String dateStr = DateFormat('MMM d').format(s.date);
         if (s.isManualPay) {
-          sb.writeln("$dateStr: Flat Pay (₱ ${currency.format(s.manualAmount)})");
+          sb.writeln(
+              "$dateStr: Flat Pay (₱ ${currency.format(s.manualAmount)})");
         } else {
           String tIn = formatTime(context, s.rawTimeIn, widget.use24HourFormat);
-          String tOut = formatTime(context, s.rawTimeOut, widget.use24HourFormat);
-          sb.writeln("$dateStr: $tIn to $tOut (REG: ${s.regularHours}h, OT: ${s.overtimeHours}h)");
+          String tOut =
+              formatTime(context, s.rawTimeOut, widget.use24HourFormat);
+          sb.writeln(
+              "$dateStr: $tIn to $tOut (REG: ${s.regularHours}h, OT: ${s.overtimeHours}h)");
         }
       }
-      sb.writeln("\n"); 
+      sb.writeln("\n");
     }
     Clipboard.setData(ClipboardData(text: sb.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("Report copied to clipboard!"), backgroundColor: Colors.green)
-    );
+    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Report copied to clipboard!"),
+        backgroundColor: Colors.green));
   }
 
   void _deleteAllData() async {
     bool? confirm = await showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Delete Everything?"),
-        content: const Text("This will permanently wipe all your data. This cannot be undone."),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("DELETE ALL", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold))),
-        ],
-      )
-    );
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: const Text("Delete Everything?"),
+              content: const Text(
+                  "This will permanently wipe all your data. This cannot be undone."),
+              actions: [
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, false),
+                    child: const Text("Cancel")),
+                TextButton(
+                    onPressed: () => Navigator.pop(ctx, true),
+                    child: const Text("DELETE ALL",
+                        style: TextStyle(
+                            color: Colors.red, fontWeight: FontWeight.bold))),
+              ],
+            ));
 
     if (confirm == true) {
       final prefs = await SharedPreferences.getInstance();
@@ -499,28 +535,30 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       setState(() {
         periods.clear();
       });
-      if(!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("All data deleted."), backgroundColor: Colors.red)
-      );
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("All data deleted."), backgroundColor: Colors.red));
     }
   }
 
   void _sortPeriods(String type) {
     playClickSound(context);
     setState(() {
-      if (type == 'newest') periods.sort((a, b) => b.start.compareTo(a.start));
-      else if (type == 'oldest') periods.sort((a, b) => a.start.compareTo(b.start)); 
-      else if (type == 'edited') periods.sort((a, b) => b.lastEdited.compareTo(a.lastEdited));
+      if (type == 'newest')
+        periods.sort((a, b) => b.start.compareTo(a.start));
+      else if (type == 'oldest')
+        periods.sort((a, b) => a.start.compareTo(b.start));
+      else if (type == 'edited')
+        periods.sort((a, b) => b.lastEdited.compareTo(a.lastEdited));
     });
     _saveData();
   }
 
   void _createNewPeriod() async {
     DateTime now = DateTime.now();
-    DateTime defaultStart = (now.day <= 15) 
-      ? DateTime(now.year, now.month, 1) 
-      : DateTime(now.year, now.month, 16);
+    DateTime defaultStart = (now.day <= 15)
+        ? DateTime(now.year, now.month, 1)
+        : DateTime(now.year, now.month, 16);
 
     playClickSound(context);
     DateTime? start = await showFastDatePicker(context, defaultStart);
@@ -533,22 +571,24 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     if (start.day <= 15) {
       defaultEnd = DateTime(start.year, start.month, 15);
       if (defaultEnd.isBefore(start) || start.day == 15) {
-         defaultEnd = DateTime(start.year, start.month, lastDayOfMonth);
+        defaultEnd = DateTime(start.year, start.month, lastDayOfMonth);
       }
     } else {
       defaultEnd = DateTime(start.year, start.month, lastDayOfMonth);
     }
 
-    DateTime? end = await showFastDatePicker(context, defaultEnd, minDate: start);
+    DateTime? end =
+        await showFastDatePicker(context, defaultEnd, minDate: start);
     if (end == null) return;
 
     final newPeriod = PayPeriod(
       id: const Uuid().v4(),
-      name: "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}",
+      name:
+          "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}",
       start: start,
       end: end,
       lastEdited: DateTime.now(),
-      hourlyRate: 50.0, 
+      hourlyRate: 50.0,
       shifts: [],
     );
     setState(() {
@@ -566,9 +606,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
     await Navigator.push(
       context,
-      MaterialPageRoute(builder: (_) => PeriodDetailScreen(period: period, use24HourFormat: widget.use24HourFormat)),
+      MaterialPageRoute(
+          builder: (_) => PeriodDetailScreen(
+              period: period, use24HourFormat: widget.use24HourFormat)),
     );
-    _saveData(); 
+    _saveData();
     setState(() {});
   }
 
@@ -578,7 +620,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     if (newStart == null) return;
 
     if (!mounted) return;
-    DateTime? newEnd = await showFastDatePicker(context, p.end, minDate: newStart);
+    DateTime? newEnd =
+        await showFastDatePicker(context, p.end, minDate: newStart);
     if (newEnd == null) return;
 
     setState(() {
@@ -586,7 +629,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       p.end = newEnd;
       p.updateName();
       p.lastEdited = DateTime.now();
-      periods.sort((a, b) => b.start.compareTo(a.start)); 
+      periods.sort((a, b) => b.start.compareTo(a.start));
     });
     _saveData();
   }
@@ -604,8 +647,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color textColor = isDark ? Colors.white : Colors.black87;
     final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
-    final Color inputBg = isDark ? const Color(0xFF2C2C2C) : Colors.grey[100]!;
-
+    
     return Scaffold(
       appBar: AppBar(
         title: const Text("Pay Dashboard"),
@@ -623,42 +665,52 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
             icon: const Icon(Icons.settings),
             itemBuilder: (ctx) => [
               PopupMenuItem(
-                enabled: false, 
-                child: StatefulBuilder(
-                  builder: (context, setState) => Row(
+                  enabled: false,
+                  child: StatefulBuilder(
+                    builder: (context, setState) => Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("Dark Mode", style: TextStyle(color: textColor)),
+                        Switch(
+                          value: widget.isDarkMode,
+                          onChanged: (val) {
+                            widget.onToggleDarkMode(val);
+                            Navigator.pop(ctx);
+                          },
+                        )
+                      ],
+                    ),
+                  )),
+              PopupMenuItem(
+                  enabled: false,
+                  child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text("Dark Mode", style: TextStyle(color: textColor)),
+                      Text("24-Hour Format", style: TextStyle(color: textColor)),
                       Switch(
-                        value: widget.isDarkMode,
+                        value: widget.use24HourFormat,
                         onChanged: (val) {
-                          widget.onToggleDarkMode(val);
+                          widget.onToggleFormat(val);
                           Navigator.pop(ctx);
                         },
                       )
                     ],
-                  ),
-                )
-              ),
-              PopupMenuItem(
-                enabled: false, 
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Text("24-Hour Format", style: TextStyle(color: textColor)),
-                    Switch(
-                      value: widget.use24HourFormat,
-                      onChanged: (val) {
-                        widget.onToggleFormat(val);
-                        Navigator.pop(ctx);
-                      },
-                    )
-                  ],
-                )
-              ),
+                  )),
               const PopupMenuDivider(),
-              const PopupMenuItem(value: 'export', child: Row(children: [Icon(Icons.copy, color: Colors.grey), SizedBox(width: 8), Text("Copy Report")])),
-              const PopupMenuItem(value: 'delete', child: Row(children: [Icon(Icons.delete_forever, color: Colors.red), SizedBox(width: 8), Text("Delete All Data", style: TextStyle(color: Colors.red))])),
+              const PopupMenuItem(
+                  value: 'export',
+                  child: Row(children: [
+                    Icon(Icons.copy, color: Colors.grey),
+                    SizedBox(width: 8),
+                    Text("Copy Report")
+                  ])),
+              const PopupMenuItem(
+                  value: 'delete',
+                  child: Row(children: [
+                    Icon(Icons.delete_forever, color: Colors.red),
+                    SizedBox(width: 8),
+                    Text("Delete All Data", style: TextStyle(color: Colors.red))
+                  ])),
             ],
             onSelected: (val) {
               if (val == 'export') _exportData();
@@ -672,9 +724,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey[300]),
+                  Icon(Icons.account_balance_wallet,
+                      size: 80, color: Colors.grey[300]),
                   const SizedBox(height: 20),
-                  Text("No Pay Trackers Found", style: TextStyle(color: subTextColor, fontSize: 16)),
+                  Text("No Pay Trackers Found",
+                      style: TextStyle(color: subTextColor, fontSize: 16)),
                   const SizedBox(height: 10),
                   ElevatedButton.icon(
                     onPressed: _createNewPeriod,
@@ -709,27 +763,30 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     alignment: Alignment.centerRight,
                     padding: const EdgeInsets.only(right: 20),
                     decoration: BoxDecoration(
-                      color: Colors.red,
-                      borderRadius: BorderRadius.circular(16)
-                    ),
+                        color: Colors.red,
+                        borderRadius: BorderRadius.circular(16)),
                     child: const Icon(Icons.delete, color: Colors.white),
                   ),
                   confirmDismiss: (direction) async {
                     playClickSound(context);
                     return await showDialog(
-                      context: context,
-                      builder: (ctx) => AlertDialog(
-                        title: const Text("Delete Tracker?"),
-                        actions: [
-                          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                          TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
-                        ],
-                      )
-                    );
+                        context: context,
+                        builder: (ctx) => AlertDialog(
+                              title: const Text("Delete Tracker?"),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text("Cancel")),
+                                TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text("Delete",
+                                        style: TextStyle(color: Colors.red))),
+                              ],
+                            ));
                   },
                   onDismissed: (direction) => _deletePeriod(index),
                   child: GestureDetector(
-                    onLongPress: () => _editPeriodDates(p), 
+                    onLongPress: () => _editPeriodDates(p),
                     onTap: () => _openPeriod(p),
                     child: Container(
                       margin: const EdgeInsets.only(bottom: 12),
@@ -737,7 +794,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                         color: Theme.of(context).cardColor,
                         borderRadius: BorderRadius.circular(16),
                         boxShadow: [
-                          BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4)),
+                          BoxShadow(
+                              color: Colors.black.withOpacity(0.05),
+                              blurRadius: 10,
+                              offset: const Offset(0, 4)),
                         ],
                       ),
                       child: Padding(
@@ -750,22 +810,38 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                               children: [
                                 Row(
                                   children: [
-                                    Text(p.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)),
+                                    Text(p.name,
+                                        style: TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                            fontSize: 16,
+                                            color: textColor)),
                                     const SizedBox(width: 5),
-                                    Icon(Icons.edit, size: 12, color: subTextColor)
+                                    Icon(Icons.edit,
+                                        size: 12, color: subTextColor)
                                   ],
                                 ),
                                 const SizedBox(height: 4),
-                                Text("${p.shifts.length} shifts", style: TextStyle(color: subTextColor, fontSize: 12)),
+                                Text("${p.shifts.length} shifts",
+                                    style: TextStyle(
+                                        color: subTextColor, fontSize: 12)),
                               ],
                             ),
                             Column(
                               crossAxisAlignment: CrossAxisAlignment.end,
                               children: [
-                                Text("TOTAL PAY", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: subTextColor)),
+                                Text("TOTAL PAY",
+                                    style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.bold,
+                                        color: subTextColor)),
                                 Text(
                                   "₱${currency.format(p.totalPay)}",
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.primary),
+                                  style: TextStyle(
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w900,
+                                      color: Theme.of(context)
+                                          .colorScheme
+                                          .primary),
                                 ),
                               ],
                             ),
@@ -791,7 +867,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 class PeriodDetailScreen extends StatefulWidget {
   final PayPeriod period;
   final bool use24HourFormat;
-  const PeriodDetailScreen({super.key, required this.period, required this.use24HourFormat});
+  const PeriodDetailScreen(
+      {super.key, required this.period, required this.use24HourFormat});
 
   @override
   State<PeriodDetailScreen> createState() => _PeriodDetailScreenState();
@@ -804,7 +881,8 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _rateController = TextEditingController(text: widget.period.hourlyRate.toString());
+    _rateController =
+        TextEditingController(text: widget.period.hourlyRate.toString());
   }
 
   void _editPeriodDates() async {
@@ -813,7 +891,8 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
     if (newStart == null) return;
 
     if (!mounted) return;
-    DateTime? newEnd = await showFastDatePicker(context, widget.period.end, minDate: newStart);
+    DateTime? newEnd =
+        await showFastDatePicker(context, widget.period.end, minDate: newStart);
     if (newEnd == null) return;
 
     setState(() {
@@ -829,16 +908,19 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
 
     DateTime tempDate = existingShift?.date ?? widget.period.start;
     if (existingShift == null) {
-       DateTime now = DateTime.now();
-       if (now.isAfter(widget.period.start) && now.isBefore(widget.period.end)) {
-         tempDate = now;
-       }
+      DateTime now = DateTime.now();
+      if (now.isAfter(widget.period.start) && now.isBefore(widget.period.end)) {
+        tempDate = now;
+      }
     }
 
-    TimeOfDay tIn = existingShift?.rawTimeIn ?? const TimeOfDay(hour: 8, minute: 0);
-    TimeOfDay tOut = existingShift?.rawTimeOut ?? const TimeOfDay(hour: 17, minute: 0);
+    TimeOfDay tIn =
+        existingShift?.rawTimeIn ?? const TimeOfDay(hour: 8, minute: 0);
+    TimeOfDay tOut =
+        existingShift?.rawTimeOut ?? const TimeOfDay(hour: 17, minute: 0);
     bool isManual = existingShift?.isManualPay ?? false;
-    TextEditingController manualCtrl = TextEditingController(text: existingShift?.manualAmount.toString() ?? "0");
+    TextEditingController manualCtrl = TextEditingController(
+        text: existingShift?.manualAmount.toString() ?? "0");
 
     // Colors for Dialog
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
@@ -847,163 +929,228 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
     final Color textColor = isDark ? Colors.white : Colors.black87;
 
     await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: dlgBg,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return Padding(
-              padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom, left: 24, right: 24, top: 24),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(existingShift == null ? "Add Shift" : "Edit Shift", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 22, color: textColor)),
-                      IconButton(onPressed: () => Navigator.pop(context), icon: Icon(Icons.close, color: textColor))
-                    ],
-                  ),
-                  const SizedBox(height: 20),
+        context: context,
+        isScrollControlled: true,
+        backgroundColor: dlgBg,
+        shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
+        builder: (ctx) {
+          return StatefulBuilder(
+            builder: (context, setModalState) {
+              return Padding(
+                padding: EdgeInsets.only(
+                    bottom: MediaQuery.of(context).viewInsets.bottom,
+                    left: 24,
+                    right: 24,
+                    top: 24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(existingShift == null ? "Add Shift" : "Edit Shift",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 22,
+                                color: textColor)),
+                        IconButton(
+                            onPressed: () => Navigator.pop(context),
+                            icon: Icon(Icons.close, color: textColor))
+                      ],
+                    ),
+                    const SizedBox(height: 20),
 
-                  GestureDetector(
-                    onTap: () async {
-                      DateTime? picked = await showFastDatePicker(context, tempDate);
-                      if (picked != null) setModalState(() => tempDate = picked);
-                    },
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
-                      decoration: BoxDecoration(color: inputBg, borderRadius: BorderRadius.circular(12)),
-                      child: Row(
+                    GestureDetector(
+                      onTap: () async {
+                        DateTime? picked =
+                            await showFastDatePicker(context, tempDate);
+                        if (picked != null)
+                          setModalState(() => tempDate = picked);
+                      },
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            vertical: 12, horizontal: 16),
+                        decoration: BoxDecoration(
+                            color: inputBg,
+                            borderRadius: BorderRadius.circular(12)),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.calendar_month,
+                                color: Colors.blue),
+                            const SizedBox(width: 12),
+                            Text("Date: ",
+                                style: TextStyle(
+                                    color: isDark
+                                        ? Colors.grey[400]
+                                        : Colors.grey[600],
+                                    fontWeight: FontWeight.bold)),
+                            Text(DateFormat('MMM d, yyyy').format(tempDate),
+                                style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 16,
+                                    color: textColor)),
+                            const Spacer(),
+                            const Icon(Icons.edit,
+                                size: 16, color: Colors.grey),
+                          ],
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text("I don't know my time",
+                            style: TextStyle(
+                                fontWeight: FontWeight.w500, color: textColor)),
+                        Switch(
+                            value: isManual,
+                            activeColor: Colors.blue,
+                            onChanged: (val) {
+                              playClickSound(context);
+                              setModalState(() => isManual = val);
+                            }),
+                      ],
+                    ),
+
+                    const Divider(height: 24),
+
+                    if (!isManual) ...[
+                      Row(
                         children: [
-                          const Icon(Icons.calendar_month, color: Colors.blue),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () async {
+                                final t = await showFastTimePicker(
+                                    context, tIn, widget.use24HourFormat);
+                                if (t != null) setModalState(() => tIn = t);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                    color: Colors.blue.withOpacity(0.05),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                        color: Colors.blue.withOpacity(0.2))),
+                                child: Column(
+                                  children: [
+                                    const Text("TIME IN",
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.blue)),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                        formatTime(context, tIn,
+                                            widget.use24HourFormat),
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                            color: textColor)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                           const SizedBox(width: 12),
-                          Text("Date: ", style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontWeight: FontWeight.bold)),
-                          Text(DateFormat('MMM d, yyyy').format(tempDate), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)),
-                          const Spacer(),
-                          const Icon(Icons.edit, size: 16, color: Colors.grey),
+                          Expanded(
+                            child: GestureDetector(
+                              onTap: () async {
+                                final t = await showFastTimePicker(
+                                    context, tOut, widget.use24HourFormat);
+                                if (t != null) setModalState(() => tOut = t);
+                              },
+                              child: Container(
+                                padding: const EdgeInsets.all(16),
+                                decoration: BoxDecoration(
+                                    color: Colors.blue.withOpacity(0.05),
+                                    borderRadius: BorderRadius.circular(12),
+                                    border: Border.all(
+                                        color: Colors.blue.withOpacity(0.2))),
+                                child: Column(
+                                  children: [
+                                    const Text("TIME OUT",
+                                        style: TextStyle(
+                                            fontSize: 10,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.blue)),
+                                    const SizedBox(height: 4),
+                                    Text(
+                                        formatTime(context, tOut,
+                                            widget.use24HourFormat),
+                                        style: TextStyle(
+                                            fontSize: 18,
+                                            fontWeight: FontWeight.bold,
+                                            color: textColor)),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
                         ],
                       ),
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text("I don't know my time", style: TextStyle(fontWeight: FontWeight.w500, color: textColor)),
-                      Switch(
-                        value: isManual, 
-                        activeColor: Colors.blue,
-                        onChanged: (val) {
-                          playClickSound(context);
-                          setModalState(() => isManual = val);
-                        }
-                      ),
+                    ] else ...[
+                      TextField(
+                        controller: manualCtrl,
+                        keyboardType: TextInputType.number,
+                        style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 18,
+                            color: textColor),
+                        decoration: InputDecoration(
+                          labelText: "Enter Amount",
+                          labelStyle: TextStyle(
+                              color: isDark ? Colors.grey : Colors.black),
+                          border: const OutlineInputBorder(),
+                          prefixText: "₱ ",
+                          prefixStyle: TextStyle(color: textColor),
+                        ),
+                      )
                     ],
-                  ),
-                  
-                  const Divider(height: 24),
 
-                  if (!isManual) ...[
-                     Row(
-                       children: [
-                         Expanded(
-                           child: GestureDetector(
-                             onTap: () async {
-                               final t = await showFastTimePicker(context, tIn, widget.use24HourFormat);
-                               if (t!=null) setModalState(() => tIn = t);
-                             },
-                             child: Container(
-                               padding: const EdgeInsets.all(16),
-                               decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.withOpacity(0.2))),
-                               child: Column(
-                                 children: [
-                                   const Text("TIME IN", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue)),
-                                   const SizedBox(height: 4),
-                                   Text(formatTime(context, tIn, widget.use24HourFormat), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
-                                 ],
-                                ),
-                             ),
-                           ),
-                         ),
-                         const SizedBox(width: 12),
-                         Expanded(
-                           child: GestureDetector(
-                             onTap: () async {
-                               final t = await showFastTimePicker(context, tOut, widget.use24HourFormat);
-                               if (t!=null) setModalState(() => tOut = t);
-                             },
-                             child: Container(
-                               padding: const EdgeInsets.all(16),
-                               decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.withOpacity(0.2))),
-                               child: Column(
-                                 children: [
-                                   const Text("TIME OUT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue)),
-                                   const SizedBox(height: 4),
-                                   Text(formatTime(context, tOut, widget.use24HourFormat), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: textColor)),
-                                 ],
-                               ),
-                             ),
-                           ),
-                         ),
-                       ],
-                     ),
-                  ] else ...[
-                     TextField(
-                       controller: manualCtrl,
-                       keyboardType: TextInputType.number,
-                       style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18, color: textColor),
-                       decoration: InputDecoration(
-                         labelText: "Enter Amount",
-                         labelStyle: TextStyle(color: isDark ? Colors.grey : Colors.black),
-                         border: const OutlineInputBorder(),
-                         prefixText: "₱ ",
-                         prefixStyle: TextStyle(color: textColor),
-                       ),
-                     )
-                  ],
-
-                  const SizedBox(height: 30),
-                  SizedBox(
-                    width: double.infinity,
-                    height: 50,
-                    child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Theme.of(context).colorScheme.primary, 
-                        foregroundColor: Colors.white,
-                        elevation: 0,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))
+                    const SizedBox(height: 30),
+                    SizedBox(
+                      width: double.infinity,
+                      height: 50,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                            backgroundColor:
+                                Theme.of(context).colorScheme.primary,
+                            foregroundColor: Colors.white,
+                            elevation: 0,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12))),
+                        child: const Text("SAVE SHIFT",
+                            style: TextStyle(
+                                fontWeight: FontWeight.bold, letterSpacing: 1)),
+                        onPressed: () {
+                          playClickSound(context);
+                          Navigator.pop(context, true);
+                        },
                       ),
-                      child: const Text("SAVE SHIFT", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: 1)),
-                      onPressed: () {
-                         playClickSound(context);
-                         Navigator.pop(context, true);
-                      },
                     ),
-                  ),
-                  const SizedBox(height: 20),
-                ],
-              ),
-            );
-          },
-        );
-      }
-    ).then((saved) {
+                    const SizedBox(height: 20),
+                  ],
+                ),
+              );
+            },
+          );
+        }).then((saved) {
       if (saved == true) {
-        bool isDuplicate = widget.period.shifts.any((s) => 
-          s.id != (existingShift?.id ?? "") && 
-          s.date.year == tempDate.year && 
-          s.date.month == tempDate.month && 
-          s.date.day == tempDate.day
-        );
+        bool isDuplicate = widget.period.shifts.any((s) =>
+            s.id != (existingShift?.id ?? "") &&
+            s.date.year == tempDate.year &&
+            s.date.month == tempDate.month &&
+            s.date.day == tempDate.day);
 
         if (isDuplicate) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text("Date overlap! Please edit the existing shift."), backgroundColor: Colors.red),
+            const SnackBar(
+                content: Text("Date overlap! Please edit the existing shift."),
+                backgroundColor: Colors.red),
           );
           return;
         }
@@ -1014,7 +1161,8 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
             existingShift.rawTimeIn = tIn;
             existingShift.rawTimeOut = tOut;
             existingShift.isManualPay = isManual;
-            existingShift.manualAmount = double.tryParse(manualCtrl.text) ?? 0.0;
+            existingShift.manualAmount =
+                double.tryParse(manualCtrl.text) ?? 0.0;
           } else {
             widget.period.shifts.add(Shift(
               id: const Uuid().v4(),
@@ -1030,7 +1178,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
         });
         // Save immediately
         final prefs = SharedPreferences.getInstance().then((p) {
-           // Parent saves on pop
+          // Parent saves on pop
         });
       }
     });
@@ -1063,35 +1211,43 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
           Container(
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
-              color: Theme.of(context).cardColor,
-              borderRadius: const BorderRadius.vertical(bottom: Radius.circular(30)),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5))
-              ]
-            ),
+                color: Theme.of(context).cardColor,
+                borderRadius:
+                    const BorderRadius.vertical(bottom: Radius.circular(30)),
+                boxShadow: [
+                  BoxShadow(
+                      color: Colors.black.withOpacity(0.05),
+                      blurRadius: 10,
+                      offset: const Offset(0, 5))
+                ]),
             child: Column(
               children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 12),
                   decoration: BoxDecoration(
-                    color: inputBg,
-                    borderRadius: BorderRadius.circular(8)
-                  ),
+                      color: inputBg, borderRadius: BorderRadius.circular(8)),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
-                      Text("HOURLY RATE", style: TextStyle(fontWeight: FontWeight.bold, color: subTextColor)),
+                      Text("HOURLY RATE",
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, color: subTextColor)),
                       SizedBox(
                         width: 100,
                         child: TextField(
                           controller: _rateController,
                           keyboardType: TextInputType.number,
                           textAlign: TextAlign.right,
-                          style: TextStyle(fontWeight: FontWeight.bold, color: textColor),
-                          decoration: InputDecoration(border: InputBorder.none, prefixText: "₱ ", prefixStyle: TextStyle(color: textColor)),
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, color: textColor),
+                          decoration: InputDecoration(
+                              border: InputBorder.none,
+                              prefixText: "₱ ",
+                              prefixStyle: TextStyle(color: textColor)),
                           onChanged: (val) {
                             setState(() {
-                              widget.period.hourlyRate = double.tryParse(val) ?? 50;
+                              widget.period.hourlyRate =
+                                  double.tryParse(val) ?? 50;
                               widget.period.lastEdited = DateTime.now();
                             });
                           },
@@ -1101,20 +1257,35 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                   ),
                 ),
                 const SizedBox(height: 20),
-                
-                Text("₱ ${currency.format(widget.period.totalPay)}", 
-                  style: TextStyle(fontSize: 40, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.primary)
-                ),
-                Text("TOTAL PAYOUT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: subTextColor, letterSpacing: 1.5)),
-                
+
+                Text("₱ ${currency.format(widget.period.totalPay)}",
+                    style: TextStyle(
+                        fontSize: 40,
+                        fontWeight: FontWeight.w900,
+                        color: Theme.of(context).colorScheme.primary)),
+                Text("TOTAL PAYOUT",
+                    style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.bold,
+                        color: subTextColor,
+                        letterSpacing: 1.5)),
+
                 const SizedBox(height: 20),
-                
+
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                   children: [
-                    _buildStatBox("REGULAR HRS", widget.period.totalRegularHours.toStringAsFixed(1), textColor, subTextColor),
+                    _buildStatBox(
+                        "REGULAR HRS",
+                        widget.period.totalRegularHours.toStringAsFixed(1),
+                        textColor,
+                        subTextColor),
                     Container(width: 1, height: 30, color: Colors.grey[300]),
-                    _buildStatBox("OVERTIME HRS", widget.period.totalOvertimeHours.toStringAsFixed(1), Colors.blue, subTextColor),
+                    _buildStatBox(
+                        "OVERTIME HRS",
+                        widget.period.totalOvertimeHours.toStringAsFixed(1),
+                        Colors.blue,
+                        subTextColor),
                   ],
                 )
               ],
@@ -1123,115 +1294,193 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
 
           // LIST VIEW
           Expanded(
-            child: widget.period.shifts.isEmpty 
-              ? Center(child: Text("Tap '+' to add a work day", style: TextStyle(color: subTextColor)))
-              : ListView.builder(
-                  padding: const EdgeInsets.only(top: 20, bottom: 100, left: 16, right: 16),
-                  itemCount: widget.period.shifts.length,
-                  itemBuilder: (ctx, i) {
-                    final s = widget.period.shifts[i];
-                    bool isInside = !s.date.isBefore(widget.period.start) && !s.date.isAfter(widget.period.end);
-                    
-                    return Dismissible(
-                      key: Key(s.id),
-                      direction: DismissDirection.endToStart,
-                      background: Container(
-                        alignment: Alignment.centerRight,
-                        padding: const EdgeInsets.only(right: 20),
-                        margin: const EdgeInsets.only(bottom: 12),
-                        decoration: BoxDecoration(
-                          color: Colors.red,
-                          borderRadius: BorderRadius.circular(12)
-                        ),
-                        child: const Icon(Icons.delete, color: Colors.white),
-                      ),
-                      onDismissed: (direction) {
-                        playClickSound(context);
-                        setState(() {
-                          widget.period.shifts.removeAt(i);
-                          widget.period.lastEdited = DateTime.now();
-                        });
-                      },
-                      child: GestureDetector(
-                        onTap: () => _showShiftDialog(existingShift: s), 
-                        child: Container(
+            child: widget.period.shifts.isEmpty
+                ? Center(
+                    child: Text("Tap '+' to add a work day",
+                        style: TextStyle(color: subTextColor)))
+                : ListView.builder(
+                    padding: const EdgeInsets.only(
+                        top: 20, bottom: 100, left: 16, right: 16),
+                    itemCount: widget.period.shifts.length,
+                    itemBuilder: (ctx, i) {
+                      final s = widget.period.shifts[i];
+                      bool isInside = !s.date.isBefore(widget.period.start) &&
+                          !s.date.isAfter(widget.period.end);
+
+                      return Dismissible(
+                        key: Key(s.id),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
                           margin: const EdgeInsets.only(bottom: 12),
-                          padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(
-                            color: Theme.of(context).cardColor,
-                            borderRadius: BorderRadius.circular(12),
-                            border: isInside ? null : Border.all(color: Colors.grey[300]!),
-                          ),
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: isInside ? Theme.of(context).colorScheme.secondary.withOpacity(0.1) : Colors.grey[800],
-                                  borderRadius: BorderRadius.circular(8),
+                              color: Colors.red,
+                              borderRadius: BorderRadius.circular(12)),
+                          child: const Icon(Icons.delete, color: Colors.white),
+                        ),
+                        // --- CONFIRMATION DIALOG ADDED HERE ---
+                        confirmDismiss: (direction) async {
+                          playClickSound(context);
+                          return await showDialog(
+                            context: context,
+                            builder: (ctx) => AlertDialog(
+                              title: const Text("Delete Shift?"),
+                              content: const Text(
+                                  "Are you sure you want to remove this work day?"),
+                              actions: [
+                                TextButton(
+                                    onPressed: () => Navigator.pop(ctx, false),
+                                    child: const Text("Cancel")),
+                                TextButton(
+                                    onPressed: () => Navigator.pop(ctx, true),
+                                    child: const Text("Delete",
+                                        style: TextStyle(color: Colors.red))),
+                              ],
+                            ),
+                          );
+                        },
+                        onDismissed: (direction) {
+                          playClickSound(context);
+                          setState(() {
+                            widget.period.shifts.removeAt(i);
+                            widget.period.lastEdited = DateTime.now();
+                          });
+                        },
+                        child: GestureDetector(
+                          onTap: () => _showShiftDialog(existingShift: s),
+                          child: Container(
+                            margin: const EdgeInsets.only(bottom: 12),
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context).cardColor,
+                              borderRadius: BorderRadius.circular(12),
+                              border: isInside
+                                  ? null
+                                  : Border.all(color: Colors.grey[300]!),
+                            ),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 8),
+                                  decoration: BoxDecoration(
+                                    color: isInside
+                                        ? Theme.of(context)
+                                            .colorScheme
+                                            .secondary
+                                            .withOpacity(0.1)
+                                        : Colors.grey[800],
+                                    borderRadius: BorderRadius.circular(8),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Text(
+                                          DateFormat('MMM')
+                                              .format(s.date)
+                                              .toUpperCase(),
+                                          style: TextStyle(
+                                              fontSize: 10,
+                                              fontWeight: FontWeight.bold,
+                                              color: isInside
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .secondary
+                                                  : Colors.grey)),
+                                      Text(DateFormat('dd').format(s.date),
+                                          style: TextStyle(
+                                              fontSize: 18,
+                                              fontWeight: FontWeight.bold,
+                                              color: isInside
+                                                  ? Theme.of(context)
+                                                      .colorScheme
+                                                      .secondary
+                                                  : Colors.grey)),
+                                    ],
+                                  ),
                                 ),
-                                child: Column(
-                                  children: [
-                                    Text(DateFormat('MMM').format(s.date).toUpperCase(), style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isInside ? Theme.of(context).colorScheme.secondary : Colors.grey)),
-                                    Text(DateFormat('dd').format(s.date), style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isInside ? Theme.of(context).colorScheme.secondary : Colors.grey)),
-                                  ],
-                                ),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    if (s.isManualPay)
-                                      Row(
-                                        children: [
-                                          Icon(Icons.edit_note, color: Colors.orange[800], size: 18),
-                                          const SizedBox(width: 4),
-                                          Text("Manual Adjustment", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange[800])),
-                                        ],
-                                      )
-                                    else
-                                      Row(
-                                        children: [
-                                          Text("${formatTime(context, s.rawTimeIn, widget.use24HourFormat)} - ${formatTime(context, s.rawTimeOut, widget.use24HourFormat)}", 
-                                            style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor)
-                                          ),
-                                          if (s.paidTimeIn != s.rawTimeIn || s.paidTimeOut != s.rawTimeOut)
-                                            const Padding(
-                                              padding: EdgeInsets.only(left: 6),
-                                              child: Icon(Icons.auto_fix_high, size: 14, color: Colors.amber),
-                                            )
-                                        ],
-                                      ),
-                                    const SizedBox(height: 4),
-                                    if (s.isManualPay)
-                                      Text("Flat Pay: ₱${currency.format(s.manualAmount)}", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: textColor))
-                                    else
-                                      RichText(
-                                        text: TextSpan(
-                                          style: TextStyle(color: subTextColor, fontSize: 12),
+                                const SizedBox(width: 16),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      if (s.isManualPay)
+                                        Row(
                                           children: [
-                                            TextSpan(text: "Reg: ${s.regularHours.toStringAsFixed(1)}"),
-                                            if (s.overtimeHours > 0)
-                                              TextSpan(text: " • OT: ${s.overtimeHours.toStringAsFixed(1)}", style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                                          ]
+                                            Icon(Icons.edit_note,
+                                                color: Colors.orange[800],
+                                                size: 18),
+                                            const SizedBox(width: 4),
+                                            Text("Manual Adjustment",
+                                                style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    color:
+                                                        Colors.orange[800])),
+                                          ],
+                                        )
+                                      else
+                                        Row(
+                                          children: [
+                                            Text(
+                                                "${formatTime(context, s.rawTimeIn, widget.use24HourFormat)} - ${formatTime(context, s.rawTimeOut, widget.use24HourFormat)}",
+                                                style: TextStyle(
+                                                    fontWeight: FontWeight.bold,
+                                                    fontSize: 16,
+                                                    color: textColor)),
+                                            if (s.paidTimeIn != s.rawTimeIn ||
+                                                s.paidTimeOut != s.rawTimeOut)
+                                              const Padding(
+                                                padding: EdgeInsets.only(left: 6),
+                                                child: Icon(Icons.auto_fix_high,
+                                                    size: 14,
+                                                    color: Colors.amber),
+                                              )
+                                          ],
                                         ),
-                                      )
-                                  ],
+                                      const SizedBox(height: 4),
+                                      if (s.isManualPay)
+                                        Text(
+                                            "Flat Pay: ₱${currency.format(s.manualAmount)}",
+                                            style: TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 16,
+                                                color: textColor))
+                                      else
+                                        RichText(
+                                          text: TextSpan(
+                                              style: TextStyle(
+                                                  color: subTextColor,
+                                                  fontSize: 12),
+                                              children: [
+                                                TextSpan(
+                                                    text:
+                                                        "Reg: ${s.regularHours.toStringAsFixed(1)}"),
+                                                if (s.overtimeHours > 0)
+                                                  TextSpan(
+                                                      text:
+                                                          " • OT: ${s.overtimeHours.toStringAsFixed(1)}",
+                                                      style: const TextStyle(
+                                                          color: Colors.blue,
+                                                          fontWeight:
+                                                              FontWeight.bold)),
+                                              ]),
+                                        )
+                                    ],
+                                  ),
                                 ),
-                              ),
-                            ],
+                              ],
+                            ),
                           ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
           ),
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showShiftDialog(), 
+        onPressed: () => _showShiftDialog(),
         icon: const Icon(Icons.add, color: Colors.white),
         label: const Text("Add Shift", style: TextStyle(color: Colors.white)),
         backgroundColor: Theme.of(context).colorScheme.primary,
@@ -1239,11 +1488,16 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
     );
   }
 
-  Widget _buildStatBox(String label, String value, Color valueColor, Color labelColor) {
+  Widget _buildStatBox(
+      String label, String value, Color valueColor, Color labelColor) {
     return Column(
       children: [
-        Text(value, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: valueColor)),
-        Text(label, style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: labelColor)),
+        Text(value,
+            style: TextStyle(
+                fontSize: 20, fontWeight: FontWeight.bold, color: valueColor)),
+        Text(label,
+            style: TextStyle(
+                fontSize: 10, fontWeight: FontWeight.bold, color: labelColor)),
       ],
     );
   }
