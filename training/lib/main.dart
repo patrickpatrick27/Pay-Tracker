@@ -1,10 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Required for Clipboard
+import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:flutter_map_marker_cluster/flutter_map_marker_cluster.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:flutter_map_cache/flutter_map_cache.dart';
+import 'package:dio/dio.dart';
+import 'package:dio_cache_interceptor/dio_cache_interceptor.dart'; 
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const MyApp());
 }
 
@@ -74,6 +79,17 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // --- SAFETY CHECKER ---
+  // This prevents the "NaN" crash by ensuring coordinates are real numbers
+  bool _isValidLatLng(dynamic lat, dynamic lng) {
+    if (lat is! num || lng is! num) return false;
+    if (lat.isNaN || lng.isNaN) return false;
+    if (lat.isInfinite || lng.isInfinite) return false;
+    // Optional: Filter out 0,0 if that's invalid for your area
+    if (lat == 0 && lng == 0) return false; 
+    return true;
+  }
+
   // --- 1. OVERVIEW MODE ---
   void _resetToOverview() {
     _generateOverviewMarkers(_allLcps);
@@ -89,6 +105,10 @@ class _MapScreenState extends State<MapScreen> {
     for (var lcp in lcps) {
       if (lcp['nps'] != null && lcp['nps'].isNotEmpty) {
         var firstNp = lcp['nps'][0];
+        
+        // SAFEGUARD: Skip if coordinates are bad
+        if (!_isValidLatLng(firstNp['lat'], firstNp['lng'])) continue;
+
         markers.add(
           Marker(
             point: LatLng(firstNp['lat'], firstNp['lng']),
@@ -121,6 +141,9 @@ class _MapScreenState extends State<MapScreen> {
     List<LatLng> pointsForBounds = [];
 
     for (var np in lcp['nps']) {
+      // SAFEGUARD: Skip bad points
+      if (!_isValidLatLng(np['lat'], np['lng'])) continue;
+
       double lat = np['lat'];
       double lng = np['lng'];
       LatLng pos = LatLng(lat, lng);
@@ -161,6 +184,7 @@ class _MapScreenState extends State<MapScreen> {
 
     setState(() => _markers = npMarkers);
 
+    // --- CRASH FIX: HANDLE SINGLE POINTS SAFELY ---
     if (pointsForBounds.isNotEmpty) {
        double minLat = pointsForBounds.first.latitude;
        double maxLat = pointsForBounds.first.latitude;
@@ -174,20 +198,25 @@ class _MapScreenState extends State<MapScreen> {
          if (p.longitude > maxLng) maxLng = p.longitude;
        }
        
-       _mapController.fitCamera(
-         CameraFit.bounds(
-           bounds: LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng)),
-           padding: const EdgeInsets.all(80), 
-         ),
-       );
+       // IF ALL POINTS ARE THE SAME (Single NP), DO NOT USE BOUNDS
+       // Using bounds on a single point causes the "Infinity" crash.
+       if (minLat == maxLat && minLng == maxLng) {
+          _mapController.move(LatLng(minLat, minLng), 18.0);
+       } else {
+          // Only use fitCamera if we actually have an area
+          _mapController.fitCamera(
+            CameraFit.bounds(
+              bounds: LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng)),
+              padding: const EdgeInsets.all(80), 
+            ),
+          );
+       }
     }
     
     _showLcpListBottomSheet(lcp);
   }
 
   // --- 3. BOTTOM SHEETS ---
-
-  // A. General List
   void _showLcpListBottomSheet(dynamic lcp) {
     showModalBottomSheet(
       context: context,
@@ -245,7 +274,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // B. NP Details (With Copy Button)
   void _showNpDetailsBottomSheet(dynamic lcp, dynamic np) {
     showModalBottomSheet(
       context: context,
@@ -266,7 +294,6 @@ class _MapScreenState extends State<MapScreen> {
               children: [
                 _buildHandle(),
                 const SizedBox(height: 15),
-                
                 Flexible(
                   child: SingleChildScrollView(
                     child: Column(
@@ -297,7 +324,6 @@ class _MapScreenState extends State<MapScreen> {
                         const SizedBox(height: 20),
                         _buildInfoRow(Icons.place, "Location", lcp['site_name']),
                         const SizedBox(height: 10),
-                        // ENABLE COPYING HERE
                         _buildInfoRow(
                           Icons.map, 
                           "Coordinates", 
@@ -310,7 +336,6 @@ class _MapScreenState extends State<MapScreen> {
                     ),
                   ),
                 ),
-                
                 const SizedBox(height: 20),
                 SizedBox(
                   width: double.infinity,
@@ -350,7 +375,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // --- UPDATED UI HELPER WITH COPY BUTTON ---
   Widget _buildInfoRow(IconData icon, String label, String value, {bool isCopyable = false}) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -371,14 +395,13 @@ class _MapScreenState extends State<MapScreen> {
             icon: const Icon(Icons.copy, size: 20, color: Colors.blueGrey),
             tooltip: "Copy Coordinates",
             padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(), // Removes default padding
+            constraints: const BoxConstraints(),
             onPressed: () {
               Clipboard.setData(ClipboardData(text: value));
               ScaffoldMessenger.of(context).showSnackBar(
                 const SnackBar(
-                  content: Text("Coordinates copied to clipboard!"),
+                  content: Text("Coordinates copied!"),
                   duration: Duration(seconds: 1),
-                  behavior: SnackBarBehavior.floating,
                 ),
               );
             },
@@ -387,7 +410,6 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-  // --- 4. SEARCH & UI ---
   void _onSearchChanged(String query) {
     if (query.isEmpty) {
       _resetToOverview();
@@ -424,11 +446,39 @@ class _MapScreenState extends State<MapScreen> {
             ),
             children: [
               TileLayer(
-                urlTemplate: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png',
-                subdomains: const ['a', 'b', 'c', 'd'],
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.davepatrick.napboxlocator',
+                tileProvider: CachedTileProvider(
+                  store: MemCacheStore(), 
+                  maxStale: const Duration(days: 30), 
+                ),
               ),
-              MarkerLayer(markers: _markers),
+              MarkerClusterLayerWidget(
+                options: MarkerClusterLayerOptions(
+                  maxClusterRadius: 45,
+                  size: const Size(40, 40),
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(50),
+                  maxZoom: 15, 
+                  markers: _markers,
+                  builder: (context, markers) {
+                    return Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(20),
+                        color: Colors.blue,
+                        border: Border.all(color: Colors.white, width: 2),
+                        boxShadow: const [BoxShadow(blurRadius: 5, color: Colors.black26)],
+                      ),
+                      child: Center(
+                        child: Text(
+                          markers.length.toString(),
+                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
             ],
           ),
 
