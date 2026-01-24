@@ -711,7 +711,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Pay Dashboard"),
+        title: const Text("Payroll Cutoffs"),
         actions: [
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort),
