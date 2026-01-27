@@ -40,7 +40,7 @@ jobs:
         run: |
           echo "storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}" > android/key.properties
           echo "keyPassword=${{ secrets.ANDROID_PASSWORD }}" >> android/key.properties
-          echo "keyAlias=${{ secrets.ALIAS }}" >> android/key.properties
+          echo "keyAlias=upload" >> android/key.properties
           echo "storeFile=upload-keystore.jks" >> android/key.properties
 
       # --- BUILD RELEASE (SIGNED) ---
