@@ -38,8 +38,8 @@ jobs:
       # --- NEW STEP: CREATE KEY.PROPERTIES ---
       - name: Create key.properties
         run: |
-          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > android/key.properties
-          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "storePassword=${{ secrets.ANDROID_STORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.ANDROID_PASSWORD }}" >> android/key.properties
           echo "keyAlias=${{ secrets.ALIAS }}" >> android/key.properties
           echo "storeFile=upload-keystore.jks" >> android/key.properties
 
