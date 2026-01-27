@@ -1,9 +1,12 @@
-name: Build and Release APK
+name: Build and Release Signed APK
 
 on:
   push:
-    tags:
-      - 'v*' # Triggers only when you push a tag like v1.0.0
+    branches: [ "main" ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -23,12 +26,25 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          # flutter-version: '3.19.0' # Uncomment if you need a specific version
 
       - name: Install Dependencies
         run: flutter pub get
 
-      - name: Build APK
+      # --- NEW STEP: DECODE KEYSTORE ---
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.PLAY_STORE_UPLOAD_KEY }}" | base64 --decode > android/app/upload-keystore.jks
+          
+      # --- NEW STEP: CREATE KEY.PROPERTIES ---
+      - name: Create key.properties
+        run: |
+          echo "storePassword=${{ secrets.KEY_STORE_PASSWORD }}" > android/key.properties
+          echo "keyPassword=${{ secrets.KEY_PASSWORD }}" >> android/key.properties
+          echo "keyAlias=${{ secrets.ALIAS }}" >> android/key.properties
+          echo "storeFile=upload-keystore.jks" >> android/key.properties
+
+      # --- BUILD RELEASE (SIGNED) ---
+      - name: Build Signed APK
         run: flutter build apk --release --no-tree-shake-icons
 
       - name: Create Release
@@ -36,7 +52,8 @@ jobs:
         with:
           artifacts: "build/app/outputs/flutter-apk/app-release.apk"
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ github.ref_name }}
-          name: "Release ${{ github.ref_name }}"
-          body: "New update for Pay Tracker Pro! 🚀"
+          tag: "latest"
+          name: "Latest Signed Release"
+          body: "This update is signed and permanent. You can install it over previous versions without losing data! 🚀"
           allowUpdates: true
+          removeArtifacts: true
