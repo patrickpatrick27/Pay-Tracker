@@ -19,7 +19,6 @@ class GithubUpdateService {
     try {
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
       String currentVersion = packageInfo.version;
-      // Remove build number for cleaner comparison (e.g. 1.0.1+2 -> 1.0.1)
       currentVersion = currentVersion.split('+')[0];
       
       print("📱 Current Version: $currentVersion");
@@ -31,8 +30,6 @@ class GithubUpdateService {
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         String tagName = data['tag_name']; 
-        
-        // Clean version string (v1.0.1 -> 1.0.1)
         String latestVersion = tagName.replaceAll('v', '');
         print("☁️ GitHub Version: $latestVersion");
 
@@ -46,7 +43,6 @@ class GithubUpdateService {
             return;
         }
 
-        // Find APK Asset
         String? apkUrl;
         List<dynamic> assets = data['assets'];
         
@@ -57,18 +53,13 @@ class GithubUpdateService {
           }
         }
 
-        if (apkUrl == null) {
-          print("❌ No APK found in release");
-          return;
-        }
+        if (apkUrl == null) return;
 
         bool isNewer = _isNewer(latestVersion, currentVersion);
 
         if (isNewer) {
           if (context.mounted) _showUpdateDialog(context, latestVersion, apkUrl);
         }
-      } else {
-        print("❌ GitHub API Error: ${response.statusCode}");
       }
     } catch (e) {
       print("❌ Update Check Failed: $e");
@@ -126,17 +117,12 @@ class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
     });
 
     try {
-      // 1. Use Temporary Directory (Matched to 'cache-path' in xml/file_paths.xml)
       Directory tempDir = await getTemporaryDirectory();
       String savePath = "${tempDir.path}/update.apk";
 
-      // 2. Delete existing file to prevent conflicts
       File file = File(savePath);
-      if (await file.exists()) {
-        await file.delete();
-      }
+      if (await file.exists()) await file.delete();
 
-      // 3. Download
       await _dio.download(
         widget.apkUrl, 
         savePath,
@@ -151,14 +137,7 @@ class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
       );
 
       setState(() => _status = "Installing...");
-
-      // 4. Install
-      // NOTE: This will trigger the Android 'Unknown Sources' prompt if not granted yet.
-      await _installer.installApk(
-        filePath: savePath,
-      );
-      
-      // We close the dialog, but the app might close itself during install
+      await _installer.installApk(filePath: savePath);
       if (mounted) Navigator.pop(context);
 
     } catch (e) {

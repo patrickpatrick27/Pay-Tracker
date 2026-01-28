@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
 import '../utils/helpers.dart';
+import '../utils/calculations.dart'; // Import calculator
 import '../widgets/custom_pickers.dart';
 
 class PeriodDetailScreen extends StatefulWidget {
@@ -184,6 +185,15 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
       }
     ).then((saved) {
       if (saved == true) {
+        // --- DUPLICATE CHECK ---
+        if (existingShift == null && isDuplicateShift(widget.period.shifts, tempDate)) {
+           ScaffoldMessenger.of(context).showSnackBar(
+             const SnackBar(content: Text("Error: A shift for this date already exists!"), backgroundColor: Colors.red)
+           );
+           return;
+        }
+        // -----------------------
+
         setState(() {
           if (existingShift != null) {
             existingShift.date = tempDate;
@@ -198,9 +208,24 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
           widget.period.shifts.sort((a, b) => b.date.compareTo(a.date));
           widget.period.lastEdited = DateTime.now();
         });
-        final prefs = SharedPreferences.getInstance().then((p) {}); 
       }
     });
+  }
+
+  void _confirmDeleteShift(int index) {
+    showConfirmationDialog(
+      context: context,
+      title: "Delete Shift?",
+      content: "Are you sure you want to remove this work day?",
+      isDestructive: true,
+      onConfirm: () {
+        playClickSound(context);
+        setState(() { 
+          widget.period.shifts.removeAt(index); 
+          widget.period.lastEdited = DateTime.now(); 
+        });
+      }
+    );
   }
 
   @override
@@ -276,21 +301,24 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                   itemCount: widget.period.shifts.length,
                   itemBuilder: (ctx, i) {
                     final s = widget.period.shifts[i];
+                    
+                    // LATE CALCULATION DISPLAY
+                    int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
+
                     return Dismissible(
                       key: Key(s.id),
                       direction: DismissDirection.endToStart,
                       background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(12)), child: const Icon(Icons.delete, color: Colors.white)),
                       confirmDismiss: (direction) async {
-                          playClickSound(context);
-                          return await showDialog(context: context, builder: (ctx) => AlertDialog(
-                            title: const Text("Delete Shift?"), content: const Text("Are you sure you want to remove this work day?"),
-                            actions: [
-                              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                              TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
-                            ],
-                          ));
+                          // This is for swipe-to-delete prompt
+                          bool confirm = false;
+                          await showConfirmationDialog(context: context, title: "Delete Shift?", content: "Remove this work day?", isDestructive: true, onConfirm: () => confirm = true);
+                          return confirm;
                       },
-                      onDismissed: (direction) { playClickSound(context); setState(() { widget.period.shifts.removeAt(i); widget.period.lastEdited = DateTime.now(); }); },
+                      onDismissed: (direction) { 
+                        playClickSound(context); 
+                        setState(() { widget.period.shifts.removeAt(i); widget.period.lastEdited = DateTime.now(); }); 
+                      },
                       child: GestureDetector(
                         onTap: () => _showShiftDialog(existingShift: s), 
                         child: Container(
@@ -317,20 +345,26 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                                       Text("Flat Pay: ₱${currency.format(s.manualAmount)}", style: const TextStyle(fontWeight: FontWeight.bold))
                                     else ...[
                                       Text("${formatTime(context, s.rawTimeIn, widget.use24HourFormat)} - ${formatTime(context, s.rawTimeOut, widget.use24HourFormat)}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                      RichText(
-                                        text: TextSpan(
-                                          style: TextStyle(color: subTextColor, fontSize: 12),
-                                          children: [
-                                            TextSpan(text: "Reg: ${s.getRegularHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}"),
-                                            if (s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) > 0)
-                                              TextSpan(text: " • OT: ${s.getOvertimeHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}", style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
-                                          ]
-                                        ),
+                                      
+                                      // BREAKDOWN
+                                      Wrap(
+                                        spacing: 8,
+                                        children: [
+                                          Text("Reg: ${s.getRegularHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", style: TextStyle(color: subTextColor, fontSize: 12)),
+                                          if (s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) > 0)
+                                            Text("OT: ${s.getOvertimeHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", style: const TextStyle(color: Colors.blue, fontWeight: FontWeight.bold, fontSize: 12)),
+                                          if (lateMins > 0)
+                                            Text("Late: ${lateMins}m", style: const TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold, fontSize: 12)),
+                                        ],
                                       )
                                     ]
                                   ],
                                 ),
                               ),
+                              IconButton(
+                                icon: const Icon(Icons.close, color: Colors.red, size: 18),
+                                onPressed: () => _confirmDeleteShift(i),
+                              )
                             ],
                           ),
                         ),

@@ -23,7 +23,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
     if (!success) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Google Sign-In Failed")),
+        const SnackBar(content: Text("Google Sign-In Failed"), backgroundColor: Colors.red),
       );
     }
   }
@@ -34,8 +34,14 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Dark Mode Logic
+    final bool isDark = Theme.of(context).brightness == Brightness.dark;
+    final Color bgColor = Theme.of(context).scaffoldBackgroundColor;
+    final Color textColor = isDark ? Colors.white : Colors.black87;
+    final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
+
     return Scaffold(
-      backgroundColor: Colors.white,
+      backgroundColor: bgColor,
       body: SafeArea(
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 30.0),
@@ -51,22 +57,22 @@ class _LoginScreenState extends State<LoginScreen> {
                 color: Color(0xFF3F51B5),
               ),
               const SizedBox(height: 20),
-              const Text(
+              Text(
                 "Pay Tracker Pro",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 28,
                   fontWeight: FontWeight.bold,
-                  color: Colors.black87,
+                  color: textColor,
                 ),
               ),
               const SizedBox(height: 10),
-              const Text(
+              Text(
                 "Track your hours. Sync your pay.\nNever miss a cent.",
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 16,
-                  color: Colors.grey,
+                  color: subTextColor,
                 ),
               ),
               const Spacer(),
@@ -80,25 +86,25 @@ class _LoginScreenState extends State<LoginScreen> {
                   icon: const Icon(Icons.g_mobiledata, size: 30),
                   label: const Text("Continue with Google"),
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: Colors.white,
-                    foregroundColor: Colors.black,
+                    backgroundColor: isDark ? Colors.grey[800] : Colors.white,
+                    foregroundColor: isDark ? Colors.white : Colors.black,
                     elevation: 2,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: const BorderSide(color: Colors.grey),
+                    side: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey),
                   ),
                 ),
                 const SizedBox(height: 15),
                 // Guest Button
                 TextButton(
                   onPressed: _handleGuestLogin,
-                  child: const Text("Continue as Guest"),
+                  child: Text("Continue as Guest", style: TextStyle(color: subTextColor)),
                 ),
               ],
               const Spacer(),
-              const Text(
+              Text(
                 "By continuing, you agree to our Terms & Privacy Policy.",
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: Colors.grey),
+                style: TextStyle(fontSize: 12, color: subTextColor),
               ),
               const SizedBox(height: 20),
             ],

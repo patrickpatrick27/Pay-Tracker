@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import '../utils/helpers.dart';
+import '../utils/calculations.dart'; // Import the new calculator
 
 class Shift {
   String id;
@@ -19,14 +20,16 @@ class Shift {
     this.manualAmount = 0.0,
   });
 
-  TimeOfDay getPaidTimeIn(TimeOfDay globalShiftStart) {
-    TimeOfDay rounded = roundTime(rawTimeIn, isStart: true);
-    double rVal = timeToDouble(rounded);
-    double sVal = timeToDouble(globalShiftStart);
-    return (rVal < sVal) ? globalShiftStart : rounded; 
-  }
+  // Duplicate Check Helper
+  @override
+  bool operator ==(Object other) =>
+      other is Shift &&
+      other.date.year == date.year &&
+      other.date.month == date.month &&
+      other.date.day == date.day;
 
-  TimeOfDay getPaidTimeOut() => roundTime(rawTimeOut, isStart: false);
+  @override
+  int get hashCode => date.hashCode;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -50,24 +53,14 @@ class Shift {
     );
   }
 
+  // --- SHORTCUTS TO CALCULATOR (Single Shift) ---
+  // These allow you to do shift.getRegularHours() if needed
   double getRegularHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    if (isManualPay) return 0;
-    double start = timeToDouble(getPaidTimeIn(globalStart));
-    double end = timeToDouble(getPaidTimeOut());
-    double shiftEnd = timeToDouble(globalEnd);
-    double actualRegularEnd = (end > shiftEnd) ? shiftEnd : end;
-    if (actualRegularEnd < start) actualRegularEnd += 24;
-    double duration = actualRegularEnd - start;
-    if (start <= 12.0 && actualRegularEnd >= 13.0) duration -= 1.0; 
-    return duration > 0 ? duration : 0;
+    return PayrollCalculator.getRegularHours(this, globalStart, globalEnd);
   }
 
   double getOvertimeHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    if (isManualPay) return 0;
-    double end = timeToDouble(getPaidTimeOut());
-    double shiftEnd = timeToDouble(globalEnd);
-    if (end > shiftEnd) return end - shiftEnd;
-    return 0;
+    return PayrollCalculator.getOvertimeHours(this, globalEnd);
   }
 }
 
@@ -106,32 +99,32 @@ class PayPeriod {
     );
   }
 
-  double getTotalPay(TimeOfDay start, TimeOfDay end) {
-    double total = 0;
-    for (var shift in shifts) {
-      if (shift.isManualPay) {
-        total += shift.manualAmount;
-      } else {
-        total += (shift.getRegularHours(start, end) * hourlyRate) + 
-                 (shift.getOvertimeHours(start, end) * hourlyRate * 1.25);
-      }
-    }
-    return total;
+  // --- RESTORED CONVENIENCE METHODS (Bridging to Calculator) ---
+
+  // 1. Total Pay
+  double getTotalPay(TimeOfDay startShift, TimeOfDay endShift) {
+    return PayrollCalculator.calculateTotalPay(this, startShift, endShift);
   }
 
-  double getTotalRegularHours(TimeOfDay start, TimeOfDay end) {
+  // 2. Total Regular Hours
+  double getTotalRegularHours(TimeOfDay startShift, TimeOfDay endShift) {
     double sum = 0;
-    for(var s in shifts) if(!s.isManualPay) sum += s.getRegularHours(start, end);
+    for (var s in shifts) {
+      sum += PayrollCalculator.getRegularHours(s, startShift, endShift);
+    }
     return sum;
   }
   
-  double getTotalOvertimeHours(TimeOfDay start, TimeOfDay end) {
+  // 3. Total Overtime Hours
+  double getTotalOvertimeHours(TimeOfDay startShift, TimeOfDay endShift) {
     double sum = 0;
-    for(var s in shifts) if(!s.isManualPay) sum += s.getOvertimeHours(start, end);
+    for (var s in shifts) {
+      sum += PayrollCalculator.getOvertimeHours(s, endShift);
+    }
     return sum;
   }
 
   void updateName() {
-    name = "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}";
+    name = "${DateFormat('MMM d').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}";
   }
 }
