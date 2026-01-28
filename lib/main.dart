@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import 'services/data_manager.dart';
 import 'services/update_service.dart';
 import 'screens/dashboard_screen.dart';
-import 'screens/login_screen.dart'; // Make sure you have the LoginScreen file created
+import 'screens/login_screen.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -104,14 +104,17 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
             shiftStart: dataManager.shiftStart,
             shiftEnd: dataManager.shiftEnd,
             
-            // Pass the update callback
-            onUpdateSettings: ({isDark, is24h, shiftStart, shiftEnd}) {
+            // Pass the update callback (Updated Signature)
+            onUpdateSettings: ({isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd}) {
+              // We pass global settings to DataManager
               dataManager.updateSettings(
                 isDark: isDark,
                 is24h: is24h,
                 shiftStart: shiftStart,
                 shiftEnd: shiftEnd,
               );
+              // Note: 'hideMoney' and 'currencySymbol' are saved locally in the Dashboard/Settings 
+              // screens using SharedPreferences, so we don't need to pass them to DataManager here.
             },
           )
         : const LoginScreen(),

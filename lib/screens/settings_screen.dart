@@ -1,25 +1,38 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart'; // Needed for Clipboard
+import 'package:flutter/cupertino.dart'; // iOS icons
+import '../services/update_service.dart';
 import '../utils/helpers.dart';
 import '../widgets/custom_pickers.dart';
-import '../utils/constants.dart';
-import '../services/update_service.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool isDarkMode;
   final bool use24HourFormat;
+  final bool hideMoney; // NEW
+  final String currencySymbol; // NEW
   final TimeOfDay shiftStart;
   final TimeOfDay shiftEnd;
-  final Function({bool? isDark, bool? is24h, TimeOfDay? shiftStart, TimeOfDay? shiftEnd}) onUpdate;
+  
+  // Updated callback
+  final Function({
+    bool? isDark, 
+    bool? is24h, 
+    bool? hideMoney, 
+    String? currencySymbol,
+    TimeOfDay? shiftStart, 
+    TimeOfDay? shiftEnd
+  }) onUpdate;
+
   final VoidCallback onDeleteAll;
-  final VoidCallback onExportReport; // Renamed for clarity
-  final VoidCallback onBackup;       // NEW: Raw JSON Export
-  final Function(String) onRestore;  // NEW: Raw JSON Import
+  final VoidCallback onExportReport;
+  final VoidCallback onBackup;
+  final Function(String) onRestore;
 
   const SettingsScreen({
     super.key,
     required this.isDarkMode,
     required this.use24HourFormat,
+    required this.hideMoney,
+    required this.currencySymbol,
     required this.shiftStart,
     required this.shiftEnd,
     required this.onUpdate,
@@ -36,6 +49,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late TimeOfDay _localShiftStart;
   late TimeOfDay _localShiftEnd;
+  final List<String> _currencies = ['₱', '\$', '€', '£', '¥', '₩', '₹', 'Rp'];
 
   @override
   void initState() {
@@ -83,13 +97,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
           FilledButton(
-            onPressed: () async {
-              // Get text, close dialog, then run restore
+            onPressed: () {
               String data = _controller.text;
               Navigator.pop(ctx);
-              if (data.isNotEmpty) {
-                widget.onRestore(data);
-              }
+              if (data.isNotEmpty) widget.onRestore(data);
             }, 
             child: const Text("Restore Data")
           ),
@@ -113,13 +124,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Padding(
             padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
             child: Text(
-              "Note: Hours worked after the Shift End Time are counted as Overtime. Arrivals before Shift Start Time are not counted.",
+              "Note: Hours worked after the Shift End Time are counted as Overtime.",
               style: TextStyle(fontSize: 12, color: Colors.grey),
             ),
           ),
           
           const SizedBox(height: 20),
-          _buildSectionHeader("PREFERENCES"),
+          _buildSectionHeader("DISPLAY & PRIVACY"),
           SwitchListTile(
             title: const Text("Dark Mode"),
             value: widget.isDarkMode,
@@ -131,6 +142,33 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: widget.use24HourFormat,
             tileColor: bg,
             onChanged: (val) => widget.onUpdate(is24h: val),
+          ),
+          SwitchListTile(
+            title: const Text("Privacy Mode"),
+            subtitle: const Text("Hide money amounts (****.**)"),
+            secondary: const Icon(CupertinoIcons.eye_slash),
+            value: widget.hideMoney,
+            tileColor: bg,
+            onChanged: (val) => widget.onUpdate(hideMoney: val),
+          ),
+          ListTile(
+            tileColor: bg,
+            leading: const Icon(CupertinoIcons.money_dollar),
+            title: const Text("Currency Symbol"),
+            trailing: DropdownButtonHideUnderline(
+              child: DropdownButton<String>(
+                value: widget.currencySymbol,
+                items: _currencies.map((String value) {
+                  return DropdownMenuItem<String>(
+                    value: value,
+                    child: Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
+                  );
+                }).toList(),
+                onChanged: (String? newValue) {
+                  if (newValue != null) widget.onUpdate(currencySymbol: newValue);
+                },
+              ),
+            ),
           ),
 
           const SizedBox(height: 20),
