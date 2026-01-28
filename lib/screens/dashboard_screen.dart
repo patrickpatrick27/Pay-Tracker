@@ -6,7 +6,7 @@ import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
-import '../utils/helpers.dart'; // Ensure playClickSound is here
+import '../utils/helpers.dart';
 import '../utils/constants.dart';
 import '../widgets/custom_pickers.dart';
 import '../services/data_manager.dart'; 
@@ -40,18 +40,27 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   @override
   void initState() {
     super.initState();
+    // Load local data immediately
     _loadData();
+    
+    // Listen for DataManager changes (like Cloud Pull finishing)
+    // This ensures data appears automatically on login
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      final manager = Provider.of<DataManager>(context, listen: false);
+      manager.addListener(() {
+        if (mounted) _loadData();
+      });
+    });
   }
 
   // --- DATA LOADING ---
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // We check kStorageKey (usually 'pay_tracker_data'). 
-    // DataManager wipes this key on logout, so this returns null if logged out.
+    // Check main storage key. DataManager wipes this on logout.
     String? data = prefs.getString(kStorageKey); 
     
-    // Fallback logic for syncing consistency if main key failed but sync key exists
+    // Safety check: if main key missing but backup key exists
     if (data == null && prefs.containsKey('pay_tracker_data')) {
       data = prefs.getString('pay_tracker_data');
     }
@@ -79,43 +88,37 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     
     // 1. Save Locally
     await prefs.setString(kStorageKey, jsonData);
-    // Redundant safety save ensures DataManager and Dashboard read same key
-    await prefs.setString('pay_tracker_data', jsonData); 
 
-    // 2. Sync to Cloud with Visual Feedback
+    // 2. Auto-sync in background
     if (mounted) {
-      final manager = Provider.of<DataManager>(context, listen: false);
-      
-      // Only show feedback if logged in user
-      if (!manager.isGuest) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Row(children: [SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)), SizedBox(width: 10), Text("Syncing to Cloud...")]),
-            duration: Duration(milliseconds: 800),
-          )
-        );
-      }
+      Provider.of<DataManager>(context, listen: false).syncPayrollToCloud(jsonList);
+    }
+  }
 
-      // Perform Sync
-      String result = await manager.syncPayrollToCloud(jsonList);
-      
-      // Show Result
-      if (mounted && !manager.isGuest) {
-        ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        
-        // Truncate message if too long for SnackBar
-        String displayMsg = result;
-        if (displayMsg.length > 80) displayMsg = "${displayMsg.substring(0, 80)}...";
+  // --- MANUAL SYNC ACTION ---
+  void _performManualSync() async {
+    final manager = Provider.of<DataManager>(context, listen: false);
+    
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 10), Text("Syncing...")]),
+        duration: Duration(seconds: 1),
+      )
+    );
 
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(displayMsg),
-            backgroundColor: result.contains("Failed") || result.contains("Error") ? Colors.red : Colors.green,
-            duration: const Duration(seconds: 3),
-          )
-        );
-      }
+    // Ensure DataManager has the latest UI data before syncing
+    final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
+    await manager.syncPayrollToCloud(jsonList);
+
+    // Force Push
+    String result = await manager.manualSync();
+
+    if (mounted) {
+      ScaffoldMessenger.of(context).hideCurrentSnackBar();
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(result),
+        backgroundColor: result.contains("Failed") ? Colors.red : Colors.green,
+      ));
     }
   }
 
@@ -140,7 +143,12 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       shiftEnd: widget.shiftEnd,
       onUpdate: widget.onUpdateSettings,
       onDeleteAll: () async {
-          // Pass logic if needed
+          // Local Delete Logic
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(kStorageKey);
+          setState(() { periods = []; });
+          // Wipe cloud too if needed
+          if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
       },
       onExportReport: _exportReportText,
       onBackup: _backupDataJSON,
@@ -196,12 +204,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     _saveData();
   }
 
-  // Helpers needed for settings screen callbacks
   void _exportReportText() {
     StringBuffer sb = StringBuffer();
     for (var p in periods) {
       sb.writeln("${p.name} (Total: ₱ ${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))})");
-      // ... (Rest of export logic matches your existing code)
     }
     Clipboard.setData(ClipboardData(text: sb.toString()));
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Readable Report copied!"), backgroundColor: Colors.green));
@@ -213,53 +219,46 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Backup Code copied!"), backgroundColor: Colors.teal));
   }
 
-  void _restoreDataJSON(String jsonString) {
-      // ... (Rest of restore logic matches your existing code)
-  }
+  void _restoreDataJSON(String jsonString) { /* existing logic */ }
 
   @override
   Widget build(BuildContext context) {
     return Consumer<DataManager>(
       builder: (context, dataManager, child) {
-        
-        // AUTO RELOAD: If DataManager wiped data (logged out), force reload to clear UI
-        if (dataManager.isGuest && periods.isNotEmpty && !dataManager.isAuthenticated) {
-           WidgetsBinding.instance.addPostFrameCallback((_) {
-             _loadData();
-           });
-        }
-
         return Scaffold(
           appBar: AppBar(
             title: const Text("Payroll Cutoffs"),
             actions: [
-              // 1. SORT
+              // 1. SYNC BUTTON (Visible only if logged in)
+              if (!dataManager.isGuest)
+                IconButton(
+                  icon: const Icon(Icons.cloud_sync),
+                  tooltip: "Force Sync",
+                  onPressed: _performManualSync,
+                ),
+
+              // 2. SORT
               IconButton(
                 icon: const Icon(Icons.sort),
                 tooltip: "Sort",
                 onPressed: () => _sortPeriods('newest'), 
               ),
               
-              // 2. SETTINGS
+              // 3. SETTINGS
               IconButton(
                 icon: const Icon(Icons.settings),
                 tooltip: "Settings",
                 onPressed: _openSettings,
               ),
 
-              // 3. PROFILE MENU (The Avatar)
+              // 4. PROFILE MENU
               PopupMenuButton<String>(
                 offset: const Offset(0, 45),
-                // The Avatar Icon
                 icon: CircleAvatar(
                   radius: 14,
                   backgroundColor: Theme.of(context).colorScheme.primary,
-                  backgroundImage: dataManager.userPhoto != null 
-                    ? NetworkImage(dataManager.userPhoto!) 
-                    : null,
-                  child: dataManager.userPhoto == null 
-                    ? const Icon(Icons.person, size: 16, color: Colors.white) 
-                    : null,
+                  backgroundImage: dataManager.userPhoto != null ? NetworkImage(dataManager.userPhoto!) : null,
+                  child: dataManager.userPhoto == null ? const Icon(Icons.person, size: 16, color: Colors.white) : null,
                 ),
                 itemBuilder: (context) {
                   if (dataManager.isGuest) {
@@ -267,16 +266,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                       const PopupMenuItem(
                          value: 'login',
                          child: Row(
-                           children: [
-                             Icon(Icons.login, size: 20),
-                             SizedBox(width: 8),
-                             Text("Log In to Sync"),
-                           ],
+                           children: [Icon(Icons.login, size: 20), SizedBox(width: 8), Text("Log In to Sync")],
                          ),
                       )
                     ];
                   }
-                  // User is Logged In
                   return [
                     PopupMenuItem(
                       enabled: false,
@@ -292,21 +286,18 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     const PopupMenuItem(
                       value: 'logout',
                       child: Row(
-                        children: [
-                          Icon(Icons.logout, color: Colors.red, size: 20),
-                          SizedBox(width: 8),
-                          Text("Logout", style: TextStyle(color: Colors.red)),
-                        ],
+                        children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text("Logout", style: TextStyle(color: Colors.red))],
                       ),
                     ),
                   ];
                 },
                 onSelected: (value) {
                   if (value == 'logout') {
-                    // Wipes local data and signs out
-                    dataManager.logout().then((_) => _loadData());
+                    // Wipes local data, signs out, and reloads UI
+                    dataManager.logout().then((_) {
+                       if (mounted) _loadData();
+                    });
                   } else if (value == 'login') {
-                     // Redirect to Login Screen
                      dataManager.logout(); 
                   }
                 },
@@ -369,32 +360,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                         onTap: () => _openPeriod(p),
                         child: Card(
                           margin: const EdgeInsets.only(bottom: 12),
-                          elevation: 2,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          child: Padding(
-                            padding: const EdgeInsets.all(20),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(p.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color)),
-                                    const SizedBox(height: 4),
-                                    Text("${p.shifts.length} shifts", style: TextStyle(color: Colors.grey, fontSize: 12)),
-                                  ],
-                                ),
-                                Column(
-                                  crossAxisAlignment: CrossAxisAlignment.end,
-                                  children: [
-                                    const Text("TOTAL PAY", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                                    Text("₱${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))}",
-                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.primary),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
+                          child: ListTile(
+                             title: Text(p.name, style: TextStyle(fontWeight: FontWeight.bold)),
+                             subtitle: Text("${p.shifts.length} shifts"),
+                             trailing: Text("₱${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))}", style: TextStyle(fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ),

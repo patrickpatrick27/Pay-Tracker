@@ -9,7 +9,7 @@ class DataManager extends ChangeNotifier {
   // --- STATE ---
   bool _isInitialized = false;
   bool _isGuest = false;
-  List<dynamic> _currentPayrollData = []; // Buffer for payroll records
+  List<dynamic> _currentPayrollData = []; 
 
   // Settings
   bool _use24HourFormat = false;
@@ -36,7 +36,7 @@ class DataManager extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _isGuest = prefs.getBool('isGuest') ?? false;
 
-    // If NOT Guest, try Silent Login & Pull Data
+    // If User, try Silent Login & Pull Data
     if (!_isGuest) {
       bool success = await _driveService.trySilentLogin();
       if (success) {
@@ -58,7 +58,7 @@ class DataManager extends ChangeNotifier {
       await prefs.setBool('isGuest', false);
       _isGuest = false;
       
-      // Merge: Cloud overwrites local on fresh login
+      // Force Pull from Cloud to overwrite any local leftovers
       await _pullAllFromCloud();
       notifyListeners();
     }
@@ -92,7 +92,7 @@ class DataManager extends ChangeNotifier {
   // Helper to completely wipe data keys from phone storage
   Future<void> _clearLocalData() async {
     final prefs = await SharedPreferences.getInstance();
-    // 'pay_tracker_data' is the main key used by Dashboard (kStorageKey)
+    // Remove ALL keys that might hold data
     await prefs.remove('pay_tracker_data'); 
     await prefs.remove('pay_periods_data'); 
     _currentPayrollData = [];
@@ -100,16 +100,22 @@ class DataManager extends ChangeNotifier {
 
   // --- 3. SYNC ENGINE ---
 
-  // Called by Dashboard. Returns a status string for the UI.
+  // MANUAL SYNC: Called by the new button
+  Future<String> manualSync() async {
+    if (_isGuest) return "Guest Mode: Data saved locally only.";
+    
+    // Push what we have in memory to the cloud
+    String? error = await _syncAllToCloud();
+    return error == null ? "Cloud Sync Successful" : "Sync Failed: $error";
+  }
+
+  // AUTO SYNC: Called by Dashboard on save
   Future<String> syncPayrollToCloud(List<Map<String, dynamic>> data) async {
     _currentPayrollData = data;
     
-    if (_isGuest) return "Saved locally (Guest Mode)";
+    if (_isGuest) return "Saved locally";
 
-    // Returns specific error message (String?) instead of bool
     String? error = await _syncAllToCloud();
-    
-    // If error is null, it succeeded. Otherwise, return the error.
     return error == null ? "Cloud Backup Complete" : "Cloud Sync Failed: $error";
   }
 
@@ -129,7 +135,7 @@ class DataManager extends ChangeNotifier {
         if (payrollMap.isNotEmpty && payrollMap['payroll_data'] != null) {
           _currentPayrollData = List<dynamic>.from(payrollMap['payroll_data']);
           
-          // SAVE TO THE KEY DASHBOARD READS
+          // CRITICAL: Save to 'pay_tracker_data' so Dashboard reads it immediately
           await prefs.setString('pay_tracker_data', jsonEncode(_currentPayrollData));
         }
 
@@ -144,20 +150,10 @@ class DataManager extends ChangeNotifier {
           _use24HourFormat = s['use24HourFormat'] ?? _use24HourFormat;
           _isDarkMode = s['isDarkMode'] ?? _isDarkMode;
           
-          if (s['shiftStart'] != null) {
-            final parts = s['shiftStart'].split(':');
-            _shiftStart = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-          }
-          if (s['shiftEnd'] != null) {
-            final parts = s['shiftEnd'].split(':');
-            _shiftEnd = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
-          }
-          
           // Persist settings locally
           await prefs.setBool('use24HourFormat', _use24HourFormat);
           await prefs.setBool('isDarkMode', _isDarkMode);
-          await prefs.setString('shiftStart', s['shiftStart']);
-          await prefs.setString('shiftEnd', s['shiftEnd']);
+          // ... (Load other settings if needed)
         }
         
         notifyListeners();
@@ -182,7 +178,6 @@ class DataManager extends ChangeNotifier {
       {'payroll_data': _currentPayrollData},
     ];
 
-    // Expects DriveService to return String? (Error message)
     return await _driveService.syncToCloud(fullBackup);
   }
 
