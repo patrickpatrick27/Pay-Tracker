@@ -52,14 +52,24 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            // 1. This adds ".debug" to the ID so it installs as a SEPARATE app
+            applicationIdSuffix = ".debug"
+            
+            // 2. This names the app "Pay Tracker (Dev)" on your home screen
+            resValue("string", "app_name", "Pay Tracker (Dev)")
+        }
+        
         getByName("release") {
             val releaseConfig = signingConfigs.findByName("release")
             if (releaseConfig != null) {
                 signingConfig = releaseConfig
             }
-            // Keep shrinking FALSE to prevent crashes
             isMinifyEnabled = false
             isShrinkResources = false
+            
+            // 3. This names the real app "Pay Tracker"
+            resValue("string", "app_name", "Pay Tracker")
         }
     }
 }

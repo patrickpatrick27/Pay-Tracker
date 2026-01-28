@@ -2,14 +2,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
-import 'package:provider/provider.dart'; // Import Provider
+import 'package:provider/provider.dart'; 
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
-import '../utils/helpers.dart';
+import '../utils/helpers.dart'; // Ensure playClickSound is here
 import '../utils/constants.dart';
 import '../widgets/custom_pickers.dart';
-import '../services/data_manager.dart'; // Import DataManager
+import '../services/data_manager.dart'; 
 import 'period_detail_screen.dart';
 import 'settings_screen.dart';
 
@@ -43,26 +43,69 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     _loadData();
   }
 
+  // --- DATA LOADING & SAVING ---
+
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
-    final String? data = prefs.getString(kStorageKey);
+    // Try to load from the main storage key
+    String? data = prefs.getString(kStorageKey);
+    
+    // Fallback: If kStorageKey is empty, check if DataManager downloaded 'pay_periods_data'
+    if (data == null && prefs.containsKey('pay_periods_data')) {
+      data = prefs.getString('pay_periods_data');
+    }
+
     if (data != null) {
       try {
         final List<dynamic> decoded = jsonDecode(data);
         setState(() {
           periods = decoded.map((e) => PayPeriod.fromJson(e)).toList();
         });
-      } catch (e) { }
+      } catch (e) { 
+        print("Error loading data: $e");
+      }
     }
   }
 
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
-    final String data = jsonEncode(periods.map((e) => e.toJson()).toList());
-    await prefs.setString(kStorageKey, data);
+    final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
+    final String jsonData = jsonEncode(jsonList);
+    
+    // 1. Save Locally
+    await prefs.setString(kStorageKey, jsonData);
+
+    // 2. Sync to Cloud via DataManager (Background)
+    if (mounted) {
+      Provider.of<DataManager>(context, listen: false).syncPayrollToCloud(jsonList);
+    }
   }
 
-  // --- EXPORT FOR HUMANS ---
+  // --- ACTIONS & DIALOGS ---
+
+  void _showLogoutDialog(DataManager manager) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Logout"),
+        content: const Text("Are you sure you want to sign out?\n\nYour data is safely backed up to your Google Drive."),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text("Cancel"),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              manager.logout(); // Redirects to Login Screen via main.dart
+            },
+            child: const Text("Logout", style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _exportReportText() {
     StringBuffer sb = StringBuffer();
     for (var p in periods) {
@@ -88,19 +131,14 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Readable Report copied!"), backgroundColor: Colors.green));
   }
 
-  // --- BACKUP FOR APP TRANSFER (JSON) ---
   void _backupDataJSON() {
     String jsonString = jsonEncode(periods.map((e) => e.toJson()).toList());
     Clipboard.setData(ClipboardData(text: jsonString));
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Backup Code copied! Paste this into the new app."), 
-        backgroundColor: Colors.teal
-      )
+      const SnackBar(content: Text("Backup Code copied!"), backgroundColor: Colors.teal)
     );
   }
 
-  // --- RESTORE FROM BACKUP ---
   void _restoreDataJSON(String jsonString) {
     try {
       final List<dynamic> decoded = jsonDecode(jsonString);
@@ -122,13 +160,12 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text("No new data found in backup (Duplicate IDs)."), backgroundColor: Colors.orange)
+          const SnackBar(content: Text("No new data found in backup."), backgroundColor: Colors.orange)
         );
       }
-
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Invalid Backup Code! Error: $e"), backgroundColor: Colors.red)
+        SnackBar(content: Text("Invalid Backup Code!"), backgroundColor: Colors.red)
       );
     }
   }
@@ -150,6 +187,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       final prefs = await SharedPreferences.getInstance();
       await prefs.remove(kStorageKey);
       setState(() { periods.clear(); });
+      // Clear cloud data as well
+      if (mounted) {
+        Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
+      }
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("All data deleted."), backgroundColor: Colors.red));
     }
   }
@@ -229,182 +270,147 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text("Payroll Cutoffs"),
-        actions: [
-          // --- NEW: USER LOGOUT / PROFILE ---
-          Consumer<DataManager>(
-            builder: (context, manager, _) {
-              // GUEST MODE: Show Login Button
-              if (manager.isGuest) {
-                return IconButton(
-                  icon: const Icon(Icons.login),
-                  tooltip: "Login",
-                  onPressed: () {
-                    // Logging out brings them back to the Login Screen
-                    manager.logout();
-                  },
-                );
-              }
-              
-              // GOOGLE USER: Show Avatar + Menu
-              return PopupMenuButton<String>(
-                offset: const Offset(0, 45),
-                icon: CircleAvatar(
-                  radius: 14,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  backgroundImage: manager.userPhoto != null 
-                    ? NetworkImage(manager.userPhoto!) 
-                    : null,
-                  child: manager.userPhoto == null 
-                    ? const Icon(Icons.person, size: 16, color: Colors.white) 
-                    : null,
-                ),
-                itemBuilder: (context) => [
-                  PopupMenuItem(
-                    enabled: false,
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(manager.userName ?? "User", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
-                        Text(manager.userEmail ?? "", style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                      ],
-                    ),
-                  ),
-                  const PopupMenuDivider(),
-                  const PopupMenuItem(
-                    value: 'logout',
-                    child: Row(
-                      children: [
-                        Icon(Icons.logout, color: Colors.red, size: 20),
-                        SizedBox(width: 8),
-                        Text("Logout", style: TextStyle(color: Colors.red)),
-                      ],
-                    ),
-                  ),
-                ],
-                onSelected: (value) {
-                  if (value == 'logout') {
-                    manager.logout();
-                  }
-                },
-              );
-            },
-          ),
-          
-          // EXISTING SORT BUTTON
-          PopupMenuButton<String>(
-            icon: const Icon(Icons.sort),
-            onSelected: _sortPeriods,
-            itemBuilder: (context) => const [
-              PopupMenuItem(value: 'newest', child: Text('Newest First')),
-              PopupMenuItem(value: 'oldest', child: Text('Oldest First')),
-              PopupMenuItem(value: 'edited', child: Text('Recent Edits')),
-            ],
-          ),
-          
-          // EXISTING SETTINGS BUTTON
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: _openSettings,
-          )
-        ],
-      ),
-      body: periods.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey[300]),
-                  const SizedBox(height: 20),
-                  Text("No Pay Trackers Found", style: TextStyle(color: Colors.grey[600], fontSize: 16)),
-                  const SizedBox(height: 10),
-                  ElevatedButton.icon(
-                    onPressed: _createNewPeriod,
-                    icon: const Icon(Icons.add),
-                    label: const Text("Create New Tracker"),
-                    style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white),
-                  )
+    // Consumer allows us to access DataManager state and methods
+    return Consumer<DataManager>(
+      builder: (context, dataManager, child) {
+        
+        // Safety check: If DataManager just finished a cloud pull, we might want to reload
+        // (Optional: You could add logic here to compare versions if needed)
+
+        return Scaffold(
+          appBar: AppBar(
+            title: const Text("Payroll Cutoffs"),
+            actions: [
+              // 1. SORT (Left)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.sort),
+                tooltip: "Sort",
+                onSelected: _sortPeriods,
+                itemBuilder: (context) => const [
+                  PopupMenuItem(value: 'newest', child: Text('Newest First')),
+                  PopupMenuItem(value: 'oldest', child: Text('Oldest First')),
+                  PopupMenuItem(value: 'edited', child: Text('Recent Edits')),
                 ],
               ),
-            )
-          : ReorderableListView.builder(
-              padding: const EdgeInsets.all(16),
-              itemCount: periods.length,
-              onReorder: (oldIndex, newIndex) {
-                playClickSound(context);
-                setState(() {
-                  if (newIndex > oldIndex) newIndex -= 1;
-                  final item = periods.removeAt(oldIndex);
-                  periods.insert(newIndex, item);
-                });
-                _saveData();
-              },
-              itemBuilder: (context, index) {
-                final p = periods[index];
-                return Dismissible(
-                  key: Key(p.id),
-                  direction: DismissDirection.endToStart,
-                  background: Container(
-                    alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20),
-                    decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)),
-                    child: const Icon(Icons.delete, color: Colors.white),
+              
+              // 2. SETTINGS (Middle)
+              IconButton(
+                icon: const Icon(Icons.settings),
+                tooltip: "Settings",
+                onPressed: _openSettings,
+              ),
+
+              // 3. LOGOUT (Right, Red)
+              IconButton(
+                icon: const Icon(Icons.logout, color: Colors.red),
+                tooltip: "Logout",
+                onPressed: () {
+                  _showLogoutDialog(dataManager);
+                },
+              ),
+              
+              const SizedBox(width: 8), // Little padding at the end
+            ],
+          ),
+          body: periods.isEmpty
+              ? Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey[300]),
+                      const SizedBox(height: 20),
+                      Text("No Pay Trackers Found", style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+                      const SizedBox(height: 10),
+                      ElevatedButton.icon(
+                        onPressed: _createNewPeriod,
+                        icon: const Icon(Icons.add),
+                        label: const Text("Create New Tracker"),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Theme.of(context).colorScheme.primary, 
+                          foregroundColor: Colors.white
+                        ),
+                      )
+                    ],
                   ),
-                  confirmDismiss: (direction) async {
+                )
+              : ReorderableListView.builder(
+                  padding: const EdgeInsets.all(16),
+                  itemCount: periods.length,
+                  onReorder: (oldIndex, newIndex) {
                     playClickSound(context);
-                    return await showDialog(context: context, builder: (ctx) => AlertDialog(
-                      title: const Text("Delete Tracker?"),
-                      actions: [
-                        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                        TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
-                      ],
-                    ));
+                    setState(() {
+                      if (newIndex > oldIndex) newIndex -= 1;
+                      final item = periods.removeAt(oldIndex);
+                      periods.insert(newIndex, item);
+                    });
+                    _saveData();
                   },
-                  onDismissed: (direction) => _deletePeriod(index),
-                  child: GestureDetector(
-                    onTap: () => _openPeriod(p),
-                    child: Container(
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16),
-                        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                  itemBuilder: (context, index) {
+                    final p = periods[index];
+                    return Dismissible(
+                      key: Key(p.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20),
+                        decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)),
+                        child: const Icon(Icons.delete, color: Colors.white),
                       ),
-                      child: Padding(
-                        padding: const EdgeInsets.all(20),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
+                      confirmDismiss: (direction) async {
+                        playClickSound(context);
+                        return await showDialog(context: context, builder: (ctx) => AlertDialog(
+                          title: const Text("Delete Tracker?"),
+                          actions: [
+                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
+                            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
+                          ],
+                        ));
+                      },
+                      onDismissed: (direction) => _deletePeriod(index),
+                      child: GestureDetector(
+                        onTap: () => _openPeriod(p),
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16),
+                            boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 4))],
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(20),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(p.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color)),
-                                const SizedBox(height: 4),
-                                Text("${p.shifts.length} shifts", style: TextStyle(color: Colors.grey, fontSize: 12)),
-                              ],
-                            ),
-                            Column(
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                const Text("TOTAL PAY", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
-                                Text("₱${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))}",
-                                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.primary),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(p.name, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: Theme.of(context).textTheme.bodyLarge?.color)),
+                                    const SizedBox(height: 4),
+                                    Text("${p.shifts.length} shifts", style: TextStyle(color: Colors.grey, fontSize: 12)),
+                                  ],
+                                ),
+                                Column(
+                                  crossAxisAlignment: CrossAxisAlignment.end,
+                                  children: [
+                                    const Text("TOTAL PAY", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.grey)),
+                                    Text("₱${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))}",
+                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Theme.of(context).colorScheme.primary),
+                                    ),
+                                  ],
                                 ),
                               ],
                             ),
-                          ],
+                          ),
                         ),
                       ),
-                    ),
-                  ),
-                );
-              },
-            ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: _createNewPeriod,
-        backgroundColor: Theme.of(context).colorScheme.primary,
-        child: const Icon(Icons.add, color: Colors.white),
-      ),
+                    );
+                  },
+                ),
+          floatingActionButton: FloatingActionButton(
+            onPressed: _createNewPeriod,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            child: const Icon(Icons.add, color: Colors.white),
+          ),
+        );
+      },
     );
   }
 }
