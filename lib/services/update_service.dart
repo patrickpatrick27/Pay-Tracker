@@ -10,7 +10,7 @@ import 'package:flutter_app_installer/flutter_app_installer.dart';
 class GithubUpdateService {
   // ---------------- CONFIG ----------------
   static const String _owner = "patrickpatrick27";
-  static const String _repo = "payout_app"; // Make sure your repo name matches this!
+  static const String _repo = "payout_app";
   // ----------------------------------------
 
   static Future<void> checkForUpdate(BuildContext context, {bool showNoUpdateMsg = false}) async {
@@ -19,6 +19,9 @@ class GithubUpdateService {
     try {
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
       String currentVersion = packageInfo.version;
+      // Remove build number for cleaner comparison (e.g. 1.0.1+2 -> 1.0.1)
+      currentVersion = currentVersion.split('+')[0];
+      
       print("📱 Current Version: $currentVersion");
 
       final response = await http.get(
@@ -32,6 +35,16 @@ class GithubUpdateService {
         // Clean version string (v1.0.1 -> 1.0.1)
         String latestVersion = tagName.replaceAll('v', '');
         print("☁️ GitHub Version: $latestVersion");
+
+        if (latestVersion == currentVersion) {
+            print("✅ App is already up to date");
+            if (showNoUpdateMsg && context.mounted) {
+                 ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text("You are on the latest version!"), backgroundColor: Colors.green)
+                 );
+            }
+            return;
+        }
 
         // Find APK Asset
         String? apkUrl;
@@ -53,12 +66,6 @@ class GithubUpdateService {
 
         if (isNewer) {
           if (context.mounted) _showUpdateDialog(context, latestVersion, apkUrl);
-        } else {
-          if (showNoUpdateMsg && context.mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text("You are on the latest version!"), backgroundColor: Colors.green)
-            );
-          }
         }
       } else {
         print("❌ GitHub API Error: ${response.statusCode}");
@@ -119,9 +126,17 @@ class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
     });
 
     try {
+      // 1. Use Temporary Directory (Matched to 'cache-path' in xml/file_paths.xml)
       Directory tempDir = await getTemporaryDirectory();
       String savePath = "${tempDir.path}/update.apk";
 
+      // 2. Delete existing file to prevent conflicts
+      File file = File(savePath);
+      if (await file.exists()) {
+        await file.delete();
+      }
+
+      // 3. Download
       await _dio.download(
         widget.apkUrl, 
         savePath,
@@ -136,11 +151,18 @@ class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
       );
 
       setState(() => _status = "Installing...");
-      await _installer.installApk(filePath: savePath);
+
+      // 4. Install
+      // NOTE: This will trigger the Android 'Unknown Sources' prompt if not granted yet.
+      await _installer.installApk(
+        filePath: savePath,
+      );
       
+      // We close the dialog, but the app might close itself during install
       if (mounted) Navigator.pop(context);
 
     } catch (e) {
+      print("Install Error: $e");
       setState(() {
         _status = "Error: $e";
         _isDownloading = false;
