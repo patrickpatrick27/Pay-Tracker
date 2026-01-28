@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:flutter/cupertino.dart'; // Added for iOS icons
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -36,7 +37,7 @@ class PayPeriodListScreen extends StatefulWidget {
 class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   List<PayPeriod> periods = [];
   final NumberFormat currency = NumberFormat("#,##0.00", "en_US");
-  bool _isUnsynced = false; // State for the Red Dot
+  bool _isUnsynced = false; 
 
   @override
   void initState() {
@@ -75,15 +76,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     await prefs.setString(kStorageKey, jsonData);
     await prefs.setString('pay_tracker_data', jsonData);
 
-    // Mark as unsynced locally until manual sync is pressed
+    // This Red Dot appears because local data != cloud data (until synced)
     setState(() {
       _isUnsynced = true;
     });
-
-    if (mounted) {
-      // Auto-push is nice, but we keep the red dot logic for the manual confirmation
-      Provider.of<DataManager>(context, listen: false).syncPayrollToCloud(jsonList);
-    }
   }
 
   void _performManualSync() async {
@@ -103,12 +99,9 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
     if (mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      
-      // If sync successful, remove red dot
       if (!result.contains("Error")) {
         setState(() => _isUnsynced = false);
       }
-
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(result),
         backgroundColor: result.contains("Error") ? Colors.red : Colors.green,
@@ -116,31 +109,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     }
   }
 
-  // --- ACTIONS ---
-
-  void _confirmDeleteAll() {
-    showConfirmationDialog(
-      context: context,
-      title: "Delete ALL Data?",
-      content: "WARNING: This will wipe all payroll history from this device and the cloud. This cannot be undone.",
-      isDestructive: true,
-      onConfirm: () async {
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.remove(kStorageKey);
-        await prefs.remove('pay_tracker_data');
-        setState(() { periods = []; });
-        if (mounted) {
-          Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
-        }
-      }
-    );
-  }
-
   void _confirmDeletePeriod(int index) {
     showConfirmationDialog(
       context: context,
       title: "Delete Cutoff?",
-      content: "Are you sure you want to delete the cutoff for ${periods[index].name}?",
+      content: "Are you sure you want to delete ${periods[index].name}?",
       isDestructive: true,
       onConfirm: () {
         playClickSound(context);
@@ -148,6 +121,25 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
         _saveData();
       }
     );
+  }
+
+  // Edit logic moved here for "Hold to Edit"
+  void _editPeriodDates(PayPeriod period) async {
+    playClickSound(context);
+    DateTime? newStart = await showFastDatePicker(context, period.start);
+    if (newStart == null) return;
+
+    if (!mounted) return;
+    DateTime? newEnd = await showFastDatePicker(context, period.end, minDate: newStart);
+    if (newEnd == null) return;
+
+    setState(() {
+      period.start = newStart;
+      period.end = newEnd;
+      period.updateName();
+      period.lastEdited = DateTime.now();
+    });
+    _saveData();
   }
 
   void _sortPeriods(String type) {
@@ -168,10 +160,16 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       shiftStart: widget.shiftStart,
       shiftEnd: widget.shiftEnd,
       onUpdate: widget.onUpdateSettings,
-      onDeleteAll: _confirmDeleteAll, // Passed the confirmation method
-      onExportReport: _exportReportText,
-      onBackup: _backupDataJSON,
-      onRestore: _restoreDataJSON,
+      onDeleteAll: () async {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove(kStorageKey);
+          await prefs.remove('pay_tracker_data');
+          setState(() { periods = []; });
+          if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
+      },
+      onExportReport: () {},
+      onBackup: () {},
+      onRestore: (s) {},
     )));
   }
 
@@ -207,7 +205,6 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     playClickSound(context);
     period.lastEdited = DateTime.now();
     _saveData();
-    // Wait for return to refresh UI totals
     await Navigator.push(context, MaterialPageRoute(builder: (_) => PeriodDetailScreen(
       period: period, 
       use24HourFormat: widget.use24HourFormat,
@@ -217,23 +214,6 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     _saveData();
     setState(() {});
   }
-  
-  void _exportReportText() {
-    StringBuffer sb = StringBuffer();
-    for (var p in periods) {
-      sb.writeln("${p.name} (Total: ₱ ${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))})");
-    }
-    Clipboard.setData(ClipboardData(text: sb.toString()));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Readable Report copied!"), backgroundColor: Colors.green));
-  }
-  
-  void _backupDataJSON() {
-    String jsonString = jsonEncode(periods.map((e) => e.toJson()).toList());
-    Clipboard.setData(ClipboardData(text: jsonString));
-    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Backup Code copied!"), backgroundColor: Colors.teal));
-  }
-
-  void _restoreDataJSON(String jsonString) { /* existing logic */ }
 
   @override
   Widget build(BuildContext context) {
@@ -241,46 +221,42 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       builder: (context, dataManager, child) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text("Payroll Cutoffs", style: TextStyle(fontWeight: FontWeight.bold)),
+            title: const Text("Payroll", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5)),
+            centerTitle: false,
             elevation: 0,
             actions: [
-              IconButton(
-                icon: const Icon(Icons.sort),
-                tooltip: "Sort",
-                onPressed: () => _sortPeriods('newest'), 
+              // SYNC BUTTON WITH CONDITIONAL RED DOT
+              Stack(
+                alignment: Alignment.topRight,
+                children: [
+                  IconButton(
+                    icon: Icon(CupertinoIcons.cloud_upload, color: Theme.of(context).iconTheme.color), 
+                    tooltip: "Sync",
+                    onPressed: (!dataManager.isGuest) ? _performManualSync : () {
+                       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login required to sync.")));
+                    },
+                  ),
+                  if (_isUnsynced && !dataManager.isGuest)
+                    Positioned(
+                      right: 8,
+                      top: 8,
+                      child: Container(
+                        width: 10,
+                        height: 10,
+                        decoration: BoxDecoration(
+                          color: Colors.red,
+                          shape: BoxShape.circle,
+                          border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2),
+                        ),
+                      ),
+                    ),
+                ],
               ),
               IconButton(
-                icon: const Icon(Icons.settings),
+                icon: const Icon(CupertinoIcons.settings),
                 tooltip: "Settings",
                 onPressed: _openSettings,
               ),
-              PopupMenuButton<String>(
-                offset: const Offset(0, 45),
-                icon: CircleAvatar(
-                  radius: 14,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  backgroundImage: dataManager.userPhoto != null ? NetworkImage(dataManager.userPhoto!) : null,
-                  child: dataManager.userPhoto == null ? const Icon(Icons.person, size: 16, color: Colors.white) : null,
-                ),
-                itemBuilder: (context) {
-                  if (dataManager.isGuest) {
-                    return [const PopupMenuItem(value: 'login', child: Text("Log In to Sync"))];
-                  }
-                  return [
-                    PopupMenuItem(enabled: false, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Signed in as:", style: TextStyle(fontSize: 10, color: Colors.grey)), Text(dataManager.userEmail ?? "User", style: TextStyle(fontWeight: FontWeight.bold))])),
-                    const PopupMenuDivider(),
-                    const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text("Logout", style: TextStyle(color: Colors.red))])),
-                  ];
-                },
-                onSelected: (value) {
-                  if (value == 'logout') {
-                    dataManager.logout().then((_) { if (mounted) _loadData(); });
-                  } else if (value == 'login') {
-                     dataManager.logout(); 
-                  }
-                },
-              ),
-              const SizedBox(width: 8),
             ],
           ),
           body: periods.isEmpty
@@ -288,65 +264,105 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                   child: Column(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Icon(Icons.account_balance_wallet, size: 80, color: Colors.grey[300]),
+                      Icon(CupertinoIcons.money_dollar_circle, size: 80, color: Colors.grey[300]),
                       const SizedBox(height: 20),
-                      Text("No Pay Trackers Found", style: TextStyle(color: Colors.grey[600], fontSize: 16)),
+                      Text("No Payrolls Yet", style: TextStyle(color: Colors.grey[600], fontSize: 16)),
                       const SizedBox(height: 10),
-                      ElevatedButton.icon(
+                      CupertinoButton(
+                        color: Theme.of(context).colorScheme.primary,
                         onPressed: _createNewPeriod,
-                        icon: const Icon(Icons.add),
-                        label: const Text("Create New Tracker"),
-                        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white),
+                        child: const Text("Create New"),
                       )
                     ],
                   ),
                 )
               : ListView.builder(
-                  padding: const EdgeInsets.all(16),
+                  padding: const EdgeInsets.only(top: 10, left: 16, right: 16, bottom: 80),
                   itemCount: periods.length,
                   itemBuilder: (context, index) {
                     final p = periods[index];
-                    return Card(
-                      elevation: 2,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                      child: InkWell(
-                        borderRadius: BorderRadius.circular(12),
+                    final totalPay = p.getTotalPay(widget.shiftStart, widget.shiftEnd);
+                    
+                    return Dismissible(
+                      key: Key(p.id),
+                      direction: DismissDirection.endToStart,
+                      background: Container(
+                        alignment: Alignment.centerRight,
+                        padding: const EdgeInsets.only(right: 24),
+                        margin: const EdgeInsets.only(bottom: 12),
+                        decoration: BoxDecoration(
+                          color: Colors.red, 
+                          borderRadius: BorderRadius.circular(16)
+                        ),
+                        child: const Icon(CupertinoIcons.delete, color: Colors.white),
+                      ),
+                      confirmDismiss: (dir) async {
+                         bool delete = false;
+                         await showConfirmationDialog(
+                           context: context, 
+                           title: "Delete?", 
+                           content: "Remove ${p.name}?", 
+                           isDestructive: true,
+                           onConfirm: () => delete = true
+                         );
+                         return delete;
+                      },
+                      onDismissed: (d) => _confirmDeletePeriod(index),
+                      child: GestureDetector(
                         onTap: () => _openPeriod(p),
-                        child: Padding(
-                          padding: const EdgeInsets.all(16.0),
+                        onLongPress: () {
+                           // Haptic feedback for "Edit Mode"
+                           HapticFeedback.mediumImpact();
+                           _editPeriodDates(p);
+                        },
+                        child: Container(
+                          margin: const EdgeInsets.only(bottom: 12),
+                          padding: const EdgeInsets.all(20),
+                          decoration: BoxDecoration(
+                            color: Theme.of(context).cardColor,
+                            borderRadius: BorderRadius.circular(16),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.04),
+                                blurRadius: 10,
+                                offset: const Offset(0, 4),
+                              )
+                            ],
+                          ),
                           child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              Container(
-                                padding: const EdgeInsets.all(10),
-                                decoration: BoxDecoration(
-                                  color: Colors.blueAccent.withOpacity(0.1),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.calendar_today, color: Colors.blueAccent),
-                              ),
-                              const SizedBox(width: 16),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(p.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                                    const SizedBox(height: 4),
-                                    Text("${p.shifts.length} Shifts", style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                                  ],
-                                ),
-                              ),
+                              // Left Side: Date & Info
                               Column(
-                                crossAxisAlignment: CrossAxisAlignment.end,
+                                crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text("₱${currency.format(p.getTotalPay(widget.shiftStart, widget.shiftEnd))}", 
-                                      style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.green)),
-                                  const SizedBox(height: 8),
-                                  InkWell(
-                                    onTap: () => _confirmDeletePeriod(index),
-                                    child: const Icon(Icons.delete_outline, size: 20, color: Colors.redAccent),
-                                  )
+                                  Text(
+                                    p.name,
+                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    "${p.shifts.length} Shifts",
+                                    style: TextStyle(color: Colors.grey[500], fontSize: 13, fontWeight: FontWeight.w500),
+                                  ),
                                 ],
+                              ),
+                              
+                              // Right Side: Money Container
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: Colors.green.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                child: Text(
+                                  "₱${currency.format(totalPay)}",
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    fontSize: 15,
+                                    color: Colors.green,
+                                  ),
+                                ),
                               )
                             ],
                           ),
@@ -355,32 +371,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     );
                   },
                 ),
-          // SYNC FAB WITH RED DOT
-          floatingActionButton: Stack(
-            alignment: Alignment.topRight,
-            children: [
-              FloatingActionButton(
-                onPressed: (!dataManager.isGuest) ? _performManualSync : () {
-                   ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login required to sync.")));
-                },
-                backgroundColor: Theme.of(context).colorScheme.primary,
-                child: const Icon(Icons.cloud_sync, color: Colors.white),
-              ),
-              if (_isUnsynced && !dataManager.isGuest)
-                Positioned(
-                  right: 0,
-                  top: 0,
-                  child: Container(
-                    width: 14,
-                    height: 14,
-                    decoration: BoxDecoration(
-                      color: Colors.red,
-                      shape: BoxShape.circle,
-                      border: Border.all(color: Colors.white, width: 2),
-                    ),
-                  ),
-                ),
-            ],
+          floatingActionButton: FloatingActionButton(
+            onPressed: _createNewPeriod,
+            backgroundColor: Theme.of(context).colorScheme.primary,
+            child: const Icon(CupertinoIcons.add, color: Colors.white),
           ),
         );
       },
