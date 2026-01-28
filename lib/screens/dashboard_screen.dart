@@ -40,11 +40,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   @override
   void initState() {
     super.initState();
-    // Load local data immediately
     _loadData();
-    
-    // Listen for DataManager changes (like Cloud Pull finishing)
-    // This ensures data appears automatically on login
+    // Auto-refresh when DataManager signals a change (like a completed sync)
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final manager = Provider.of<DataManager>(context, listen: false);
       manager.addListener(() {
@@ -57,13 +54,9 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Check main storage key. DataManager wipes this on logout.
-    String? data = prefs.getString(kStorageKey); 
-    
-    // Safety check: if main key missing but backup key exists
-    if (data == null && prefs.containsKey('pay_tracker_data')) {
-      data = prefs.getString('pay_tracker_data');
-    }
+    // DataManager wipes 'pay_tracker_data' on logout. 
+    String? data = prefs.getString('pay_tracker_data');
+    if (data == null) data = prefs.getString(kStorageKey); 
 
     if (data != null) {
       try {
@@ -73,57 +66,56 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
         });
       } catch (e) { }
     } else {
-      // CLEAR LIST: If data is null (meaning we logged out), wipe the UI list
-      setState(() {
-        periods = [];
-      });
+      setState(() { periods = []; });
     }
   }
 
-  // --- DATA SAVING ---
+  // --- DATA SAVING (Auto-Push) ---
   Future<void> _saveData() async {
     final prefs = await SharedPreferences.getInstance();
     final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
     final String jsonData = jsonEncode(jsonList);
     
-    // 1. Save Locally
+    // Save to both keys to be safe
     await prefs.setString(kStorageKey, jsonData);
+    await prefs.setString('pay_tracker_data', jsonData);
 
-    // 2. Auto-sync in background
+    // Auto-push in background
     if (mounted) {
       Provider.of<DataManager>(context, listen: false).syncPayrollToCloud(jsonList);
     }
   }
 
-  // --- MANUAL SYNC ACTION ---
+  // --- MANUAL SYNC (Smart Merge) ---
   void _performManualSync() async {
     final manager = Provider.of<DataManager>(context, listen: false);
     
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 10), Text("Syncing...")]),
+        content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 10), Text("Syncing (Merging Data)...")]),
         duration: Duration(seconds: 1),
       )
     );
 
-    // Ensure DataManager has the latest UI data before syncing
-    final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
-    await manager.syncPayrollToCloud(jsonList);
+    // Prepare current local data
+    final List<Map<String, dynamic>> localJson = periods.map((e) => e.toJson()).toList();
+    
+    // Perform Smart Sync (Merge Cloud + Local)
+    String result = await manager.smartSync(localJson);
 
-    // Force Push
-    String result = await manager.manualSync();
+    // Reload UI with the result
+    await _loadData();
 
     if (mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
         content: Text(result),
-        backgroundColor: result.contains("Failed") ? Colors.red : Colors.green,
+        backgroundColor: result.contains("Error") ? Colors.red : Colors.green,
       ));
     }
   }
 
   // --- ACTIONS ---
-
   void _sortPeriods(String type) {
     if (mounted) playClickSound(context); 
     setState(() {
@@ -143,11 +135,10 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       shiftEnd: widget.shiftEnd,
       onUpdate: widget.onUpdateSettings,
       onDeleteAll: () async {
-          // Local Delete Logic
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove(kStorageKey);
+          await prefs.remove('pay_tracker_data');
           setState(() { periods = []; });
-          // Wipe cloud too if needed
           if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
       },
       onExportReport: _exportReportText,
@@ -229,11 +220,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
           appBar: AppBar(
             title: const Text("Payroll Cutoffs"),
             actions: [
-              // 1. SYNC BUTTON (Visible only if logged in)
+              // 1. SYNC BUTTON (Smart Merge)
               if (!dataManager.isGuest)
                 IconButton(
-                  icon: const Icon(Icons.cloud_sync),
-                  tooltip: "Force Sync",
+                  icon: const Icon(Icons.sync), 
+                  tooltip: "Sync (Merge)",
                   onPressed: _performManualSync,
                 ),
 
@@ -262,41 +253,17 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                 ),
                 itemBuilder: (context) {
                   if (dataManager.isGuest) {
-                    return [
-                      const PopupMenuItem(
-                         value: 'login',
-                         child: Row(
-                           children: [Icon(Icons.login, size: 20), SizedBox(width: 8), Text("Log In to Sync")],
-                         ),
-                      )
-                    ];
+                    return [const PopupMenuItem(value: 'login', child: Text("Log In to Sync"))];
                   }
                   return [
-                    PopupMenuItem(
-                      enabled: false,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Signed in as:", style: TextStyle(fontSize: 10, color: Colors.grey)),
-                          Text(dataManager.userEmail ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color)),
-                        ],
-                      ),
-                    ),
+                    PopupMenuItem(enabled: false, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Signed in as:", style: TextStyle(fontSize: 10, color: Colors.grey)), Text(dataManager.userEmail ?? "User", style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).textTheme.bodyLarge?.color))])),
                     const PopupMenuDivider(),
-                    const PopupMenuItem(
-                      value: 'logout',
-                      child: Row(
-                        children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text("Logout", style: TextStyle(color: Colors.red))],
-                      ),
-                    ),
+                    const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text("Logout", style: TextStyle(color: Colors.red))])),
                   ];
                 },
                 onSelected: (value) {
                   if (value == 'logout') {
-                    // Wipes local data, signs out, and reloads UI
-                    dataManager.logout().then((_) {
-                       if (mounted) _loadData();
-                    });
+                    dataManager.logout().then((_) { if (mounted) _loadData(); });
                   } else if (value == 'login') {
                      dataManager.logout(); 
                   }
@@ -318,10 +285,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                         onPressed: _createNewPeriod,
                         icon: const Icon(Icons.add),
                         label: const Text("Create New Tracker"),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: Theme.of(context).colorScheme.primary, 
-                          foregroundColor: Colors.white
-                        ),
+                        style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white),
                       )
                     ],
                   ),
@@ -340,22 +304,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     return Dismissible(
                       key: Key(p.id),
                       direction: DismissDirection.endToStart,
-                      background: Container(
-                        alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20),
-                        decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)),
-                        child: const Icon(Icons.delete, color: Colors.white),
-                      ),
-                      confirmDismiss: (direction) async {
-                        playClickSound(context);
-                        return await showDialog(context: context, builder: (ctx) => AlertDialog(
-                          title: const Text("Delete Tracker?"),
-                          actions: [
-                            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text("Cancel")),
-                            TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text("Delete", style: TextStyle(color: Colors.red))),
-                          ],
-                        ));
-                      },
-                      onDismissed: (direction) => _deletePeriod(index),
+                      background: Container(color: Colors.red),
+                      onDismissed: (d) => _deletePeriod(index),
                       child: GestureDetector(
                         onTap: () => _openPeriod(p),
                         child: Card(

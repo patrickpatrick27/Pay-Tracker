@@ -36,7 +36,6 @@ class DataManager extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     _isGuest = prefs.getBool('isGuest') ?? false;
 
-    // If User, try Silent Login & Pull Data
     if (!_isGuest) {
       bool success = await _driveService.trySilentLogin();
       if (success) {
@@ -50,15 +49,12 @@ class DataManager extends ChangeNotifier {
   }
 
   // --- 2. AUTH ACTIONS ---
-  
   Future<bool> loginWithGoogle() async {
     bool success = await _driveService.signIn();
     if (success) {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setBool('isGuest', false);
       _isGuest = false;
-      
-      // Force Pull from Cloud to overwrite any local leftovers
       await _pullAllFromCloud();
       notifyListeners();
     }
@@ -67,10 +63,7 @@ class DataManager extends ChangeNotifier {
 
   Future<void> continueAsGuest() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // CRITICAL: Wipe any previous user data so guest starts fresh
     await _clearLocalData(); 
-
     await prefs.setBool('isGuest', true);
     _isGuest = true;
     notifyListeners();
@@ -78,21 +71,15 @@ class DataManager extends ChangeNotifier {
 
   Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    
-    // CRITICAL: Wipe local data on logout
     await _clearLocalData();
-    
     await prefs.remove('isGuest');
     _isGuest = false;
-    
     await _driveService.signOut();
     notifyListeners();
   }
 
-  // Helper to completely wipe data keys from phone storage
   Future<void> _clearLocalData() async {
     final prefs = await SharedPreferences.getInstance();
-    // Remove ALL keys that might hold data
     await prefs.remove('pay_tracker_data'); 
     await prefs.remove('pay_periods_data'); 
     _currentPayrollData = [];
@@ -100,23 +87,82 @@ class DataManager extends ChangeNotifier {
 
   // --- 3. SYNC ENGINE ---
 
-  // MANUAL SYNC: Called by the new button
-  Future<String> manualSync() async {
-    if (_isGuest) return "Guest Mode: Data saved locally only.";
-    
-    // Push what we have in memory to the cloud
-    String? error = await _syncAllToCloud();
-    return error == null ? "Cloud Sync Successful" : "Sync Failed: $error";
+  // SMART SYNC: Merges Cloud and Local data
+  Future<String> smartSync(List<Map<String, dynamic>> localData) async {
+    if (_isGuest) return "Guest Mode: Saved locally.";
+
+    try {
+      // 1. Fetch Cloud Data
+      final cloudBackup = await _driveService.fetchCloudData();
+      List<dynamic> cloudList = [];
+      
+      if (cloudBackup != null && cloudBackup.isNotEmpty) {
+        final payrollMap = cloudBackup.firstWhere(
+          (e) => e.containsKey('payroll_data'), orElse: () => {}
+        );
+        if (payrollMap['payroll_data'] != null) {
+          cloudList = List<dynamic>.from(payrollMap['payroll_data']);
+        }
+      }
+
+      // 2. MERGE LOGIC
+      Map<String, Map<String, dynamic>> mergedMap = {};
+
+      // Add all Local items first
+      for (var item in localData) {
+        mergedMap[item['id']] = item;
+      }
+
+      // Merge Cloud items
+      int updates = 0;
+      for (var cloudItem in cloudList) {
+        String id = cloudItem['id'];
+        
+        if (mergedMap.containsKey(id)) {
+          // Conflict: Compare dates
+          // Using a default distant past date if lastEdited is missing to be safe
+          DateTime localDate = DateTime.tryParse(mergedMap[id]!['lastEdited'] ?? "") ?? DateTime(2000);
+          DateTime cloudDate = DateTime.tryParse(cloudItem['lastEdited'] ?? "") ?? DateTime(2000);
+
+          // If Cloud is newer, overwrite local
+          if (cloudDate.isAfter(localDate)) {
+            mergedMap[id] = cloudItem;
+            updates++;
+          }
+        } else {
+          // New item from cloud (doesn't exist locally)
+          mergedMap[id] = cloudItem;
+          updates++;
+        }
+      }
+
+      // 3. Finalize List
+      _currentPayrollData = mergedMap.values.toList();
+      
+      // 4. Save merged data to Local Storage (so UI updates)
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('pay_tracker_data', jsonEncode(_currentPayrollData));
+
+      // 5. Upload merged data back to Cloud
+      await _syncAllToCloud();
+
+      return "Sync Complete (Merged $updates items)";
+
+    } catch (e) {
+      print("Smart Sync Error: $e");
+      // Fallback: Just try to upload what we have
+      await _syncAllToCloud(); 
+      return "Sync Error (Uploaded Local Only)";
+    }
   }
 
-  // AUTO SYNC: Called by Dashboard on save
+  // Simple Auto-Save (Push Only)
   Future<String> syncPayrollToCloud(List<Map<String, dynamic>> data) async {
     _currentPayrollData = data;
-    
     if (_isGuest) return "Saved locally";
 
     String? error = await _syncAllToCloud();
-    return error == null ? "Cloud Backup Complete" : "Cloud Sync Failed: $error";
+    return error == null ? "Cloud Backup Complete" : "Sync Failed: $error";
   }
 
   Future<void> _pullAllFromCloud() async {
@@ -126,36 +172,22 @@ class DataManager extends ChangeNotifier {
       if (cloudData != null && cloudData.isNotEmpty) {
         final prefs = await SharedPreferences.getInstance();
 
-        // A. Restore Data
-        final payrollMap = cloudData.firstWhere(
-          (element) => element.containsKey('payroll_data'),
-          orElse: () => {},
-        );
-
+        // Data
+        final payrollMap = cloudData.firstWhere((e) => e.containsKey('payroll_data'), orElse: () => {});
         if (payrollMap.isNotEmpty && payrollMap['payroll_data'] != null) {
           _currentPayrollData = List<dynamic>.from(payrollMap['payroll_data']);
-          
-          // CRITICAL: Save to 'pay_tracker_data' so Dashboard reads it immediately
           await prefs.setString('pay_tracker_data', jsonEncode(_currentPayrollData));
         }
 
-        // B. Restore Settings
-        final settingsMap = cloudData.firstWhere(
-          (element) => element.containsKey('settings'), 
-          orElse: () => {},
-        );
-
+        // Settings
+        final settingsMap = cloudData.firstWhere((e) => e.containsKey('settings'), orElse: () => {});
         if (settingsMap.isNotEmpty && settingsMap['settings'] != null) {
-          final s = settingsMap['settings'];
-          _use24HourFormat = s['use24HourFormat'] ?? _use24HourFormat;
-          _isDarkMode = s['isDarkMode'] ?? _isDarkMode;
-          
-          // Persist settings locally
-          await prefs.setBool('use24HourFormat', _use24HourFormat);
-          await prefs.setBool('isDarkMode', _isDarkMode);
-          // ... (Load other settings if needed)
+           final s = settingsMap['settings'];
+           _use24HourFormat = s['use24HourFormat'] ?? _use24HourFormat;
+           _isDarkMode = s['isDarkMode'] ?? _isDarkMode;
+           await prefs.setBool('use24HourFormat', _use24HourFormat);
+           await prefs.setBool('isDarkMode', _isDarkMode);
         }
-        
         notifyListeners();
       }
     } catch (e) {
