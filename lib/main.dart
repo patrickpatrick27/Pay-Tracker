@@ -1,17 +1,16 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import 'screens/dashboard_screen.dart'; // Ensure this matches your file structure
-import 'services/update_service.dart';
 import 'services/data_manager.dart';
+import 'services/update_service.dart';
+import 'screens/dashboard_screen.dart';
+import 'screens/login_screen.dart'; // Make sure you have the LoginScreen file created
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  
   runApp(
-    // 1. INJECT THE DATA MANAGER
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => DataManager()..loadData()),
+        ChangeNotifierProvider(create: (_) => DataManager()..initApp()),
       ],
       child: const PayTrackerApp(),
     ),
@@ -26,36 +25,37 @@ class PayTrackerApp extends StatefulWidget {
 }
 
 class _PayTrackerAppState extends State<PayTrackerApp> {
-
+  
   @override
   void initState() {
     super.initState();
-    // Auto-check for updates (UI must build first)
+    // Auto-update check
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) {
-        GithubUpdateService.checkForUpdate(context);
-      }
+      if (mounted) GithubUpdateService.checkForUpdate(context);
     });
   }
 
   @override
   Widget build(BuildContext context) {
-    // 2. LISTEN TO SETTINGS CHANGES
+    // Watch DataManager for Auth & Settings
     final dataManager = Provider.of<DataManager>(context);
 
-    if (dataManager.isLoading) {
-      // Show simple loader while fetching settings
+    // 1. Loading Screen (while checking Google Auth)
+    if (!dataManager.isInitialized) {
       return const MaterialApp(
         debugShowCheckedModeBanner: false,
-        home: Scaffold(body: Center(child: CircularProgressIndicator())),
+        home: Scaffold(
+          body: Center(child: CircularProgressIndicator()),
+        ),
       );
     }
 
+    // 2. Main App Logic
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       title: 'Pay Tracker Pro',
       
-      // 3. USE DATA MANAGER SETTINGS
+      // Dynamic Theme based on DataManager
       themeMode: dataManager.isDarkMode ? ThemeMode.dark : ThemeMode.light,
       
       theme: ThemeData(
@@ -95,24 +95,26 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
         cardColor: const Color(0xFF1E1E1E),
       ),
 
-      // 4. PASS DATA MANAGER TO DASHBOARD
-      home: PayPeriodListScreen(
-        // We pass the values directly from our Provider
-        use24HourFormat: dataManager.use24HourFormat,
-        isDarkMode: dataManager.isDarkMode,
-        shiftStart: dataManager.shiftStart,
-        shiftEnd: dataManager.shiftEnd,
-        
-        // When settings change, we call the Provider method
-        onUpdateSettings: ({isDark, is24h, shiftStart, shiftEnd}) {
-          dataManager.updateSettings(
-            isDark: isDark,
-            is24h: is24h,
-            shiftStart: shiftStart,
-            shiftEnd: shiftEnd,
-          );
-        },
-      ),
+      // 3. Routing Logic: Login vs Dashboard
+      home: dataManager.isAuthenticated 
+        ? PayPeriodListScreen(
+            // Pass values from Provider to Dashboard
+            use24HourFormat: dataManager.use24HourFormat,
+            isDarkMode: dataManager.isDarkMode,
+            shiftStart: dataManager.shiftStart,
+            shiftEnd: dataManager.shiftEnd,
+            
+            // Pass the update callback
+            onUpdateSettings: ({isDark, is24h, shiftStart, shiftEnd}) {
+              dataManager.updateSettings(
+                isDark: isDark,
+                is24h: is24h,
+                shiftStart: shiftStart,
+                shiftEnd: shiftEnd,
+              );
+            },
+          )
+        : const LoginScreen(),
     );
   }
 }

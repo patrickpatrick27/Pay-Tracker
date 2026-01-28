@@ -4,115 +4,110 @@ import 'package:googleapis/drive/v3.dart' as drive;
 import 'package:extension_google_sign_in_as_googleapis_auth/extension_google_sign_in_as_googleapis_auth.dart';
 
 class DriveService {
-  // Use the 'appDataFolder' scope. This is a special hidden folder in Drive
-  // that users can't see or mess with, but your app can use.
   final GoogleSignIn _googleSignIn = GoogleSignIn(
     scopes: [drive.DriveApi.driveAppdataScope],
   );
 
   drive.DriveApi? _api;
+  GoogleSignInAccount? get currentUser => _googleSignIn.currentUser;
 
-  // 1. SILENT LOGIN (Get Access to Drive)
-  Future<bool> init() async {
+  // 1. SILENT LOGIN (On App Startup)
+  Future<bool> trySilentLogin() async {
     try {
-      // Try to sign in silently first (if user is already logged in)
-      var googleUser = await _googleSignIn.signInSilently();
-      if (googleUser == null) {
-        // If not, force interactive sign in
-        googleUser = await _googleSignIn.signIn();
+      final account = await _googleSignIn.signInSilently();
+      if (account != null) {
+        await _initializeClient();
+        return true;
       }
-      
-      if (googleUser == null) return false; // User cancelled
-
-      final httpClient = await _googleSignIn.authenticatedClient();
-      if (httpClient == null) return false;
-
-      _api = drive.DriveApi(httpClient);
-      return true;
     } catch (e) {
-      print("Drive Init Error: $e");
-      return false;
+      print("Silent Login Error: $e");
+    }
+    return false;
+  }
+
+  // 2. EXPLICIT LOGIN (Login Button)
+  Future<bool> signIn() async {
+    try {
+      final account = await _googleSignIn.signIn();
+      if (account != null) {
+        await _initializeClient();
+        return true;
+      }
+    } catch (e) {
+      print("Sign In Error: $e");
+    }
+    return false;
+  }
+
+  // 3. LOGOUT
+  Future<void> signOut() async {
+    await _googleSignIn.signOut();
+    _api = null;
+  }
+
+  // Helper: Setup the Drive API Client
+  Future<void> _initializeClient() async {
+    final httpClient = await _googleSignIn.authenticatedClient();
+    if (httpClient != null) {
+      _api = drive.DriveApi(httpClient);
     }
   }
 
-  // 2. DOWNLOAD (Load on Startup)
+  // --- DRIVE OPERATIONS (Same as before) ---
   Future<List<Map<String, dynamic>>?> fetchCloudData() async {
-    if (_api == null) await init();
     if (_api == null) return null;
-
     try {
-      // Find our specific file
       final fileId = await _findFileId();
-      if (fileId == null) return null; // No backup exists yet
+      if (fileId == null) return null;
 
-      // Download content
       final media = await _api!.files.get(
         fileId,
         downloadOptions: drive.DownloadOptions.fullMedia,
       ) as drive.Media;
 
-      // Decode stream to String
       final List<int> dataStore = [];
       await media.stream.forEach((element) => dataStore.addAll(element));
+      
+      if (dataStore.isEmpty) return null;
+      
       final String jsonString = utf8.decode(dataStore);
-
-      // Convert JSON back to List
       final List<dynamic> rawList = jsonDecode(jsonString);
       return rawList.map((e) => e as Map<String, dynamic>).toList();
     } catch (e) {
-      print("Download Error: $e");
+      print("Fetch Error: $e");
       return null;
     }
   }
 
-  // 3. UPLOAD (Save on Change)
-  Future<void> syncToCloud(List<Map<String, dynamic>> localData) async {
-    if (_api == null) await init();
-    if (_api == null) return;
-
+  Future<void> syncToCloud(List<Map<String, dynamic>> data) async {
+    if (_api == null) return; // Guest mode or not logged in
     try {
-      // Convert your data list to JSON
-      final String jsonString = jsonEncode(localData);
+      final String jsonString = jsonEncode(data);
       final List<int> fileBytes = utf8.encode(jsonString);
       final media = drive.Media(Stream.value(fileBytes), fileBytes.length);
 
       final fileId = await _findFileId();
 
       if (fileId != null) {
-        // UPDATE existing file
-        await _api!.files.update(
-          drive.File(),
-          fileId,
-          uploadMedia: media,
-        );
-        print("☁️ Cloud Updated Successfully");
+        await _api!.files.update(drive.File(), fileId, uploadMedia: media);
       } else {
-        // CREATE new file (First time)
         final fileMetadata = drive.File()
           ..name = 'pay_tracker_data.json'
-          ..parents = ['appDataFolder']; // <--- HIDDEN FOLDER
-
-        await _api!.files.create(
-          fileMetadata,
-          uploadMedia: media,
-        );
-        print("☁️ Cloud Backup Created");
+          ..parents = ['appDataFolder'];
+        await _api!.files.create(fileMetadata, uploadMedia: media);
       }
+      print("☁️ Cloud Synced");
     } catch (e) {
-      print("Upload Error: $e");
+      print("Sync Error: $e");
     }
   }
 
-  // Helper: Find file ID by name
   Future<String?> _findFileId() async {
+    if (_api == null) return null;
     final list = await _api!.files.list(
       spaces: 'appDataFolder',
       q: "name = 'pay_tracker_data.json' and trashed = false",
     );
     return (list.files?.isNotEmpty == true) ? list.files!.first.id : null;
-  }
-  
-  Future<void> signOut() async {
-    await _googleSignIn.signOut();
   }
 }

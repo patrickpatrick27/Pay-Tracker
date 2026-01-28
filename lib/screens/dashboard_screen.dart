@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart'; // Import Provider
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
 import '../utils/helpers.dart';
 import '../utils/constants.dart';
 import '../widgets/custom_pickers.dart';
+import '../services/data_manager.dart'; // Import DataManager
 import 'period_detail_screen.dart';
 import 'settings_screen.dart';
 
@@ -88,13 +90,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
   // --- BACKUP FOR APP TRANSFER (JSON) ---
   void _backupDataJSON() {
-    // 1. Encode the entire list of objects to JSON
     String jsonString = jsonEncode(periods.map((e) => e.toJson()).toList());
-    
-    // 2. Copy to clipboard
     Clipboard.setData(ClipboardData(text: jsonString));
-    
-    // 3. Feedback
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text("Backup Code copied! Paste this into the new app."), 
@@ -106,16 +103,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   // --- RESTORE FROM BACKUP ---
   void _restoreDataJSON(String jsonString) {
     try {
-      // 1. Try decoding the string
       final List<dynamic> decoded = jsonDecode(jsonString);
-      
-      // 2. Convert to Objects
       List<PayPeriod> importedPeriods = decoded.map((e) => PayPeriod.fromJson(e)).toList();
       
-      // 3. Merge Logic (Avoid duplicates based on ID)
       int addedCount = 0;
       for (var imported in importedPeriods) {
-        // Check if we already have this period (by ID)
         bool exists = periods.any((existing) => existing.id == imported.id);
         if (!exists) {
           periods.add(imported);
@@ -123,9 +115,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
         }
       }
 
-      // 4. Save and Sort
       if (addedCount > 0) {
-        _sortPeriods('newest'); // This saves internally
+        _sortPeriods('newest');
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Successfully restored $addedCount records!"), backgroundColor: Colors.green)
         );
@@ -164,9 +155,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   }
 
   void _sortPeriods(String type) {
-    // Only play sound if context is valid (prevents errors during background sorting)
     if (mounted) playClickSound(context); 
-    
     setState(() {
       if (type == 'newest') periods.sort((a, b) => b.start.compareTo(a.start));
       else if (type == 'oldest') periods.sort((a, b) => a.start.compareTo(b.start)); 
@@ -244,6 +233,67 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       appBar: AppBar(
         title: const Text("Payroll Cutoffs"),
         actions: [
+          // --- NEW: USER LOGOUT / PROFILE ---
+          Consumer<DataManager>(
+            builder: (context, manager, _) {
+              // GUEST MODE: Show Login Button
+              if (manager.isGuest) {
+                return IconButton(
+                  icon: const Icon(Icons.login),
+                  tooltip: "Login",
+                  onPressed: () {
+                    // Logging out brings them back to the Login Screen
+                    manager.logout();
+                  },
+                );
+              }
+              
+              // GOOGLE USER: Show Avatar + Menu
+              return PopupMenuButton<String>(
+                offset: const Offset(0, 45),
+                icon: CircleAvatar(
+                  radius: 14,
+                  backgroundColor: Theme.of(context).colorScheme.primary,
+                  backgroundImage: manager.userPhoto != null 
+                    ? NetworkImage(manager.userPhoto!) 
+                    : null,
+                  child: manager.userPhoto == null 
+                    ? const Icon(Icons.person, size: 16, color: Colors.white) 
+                    : null,
+                ),
+                itemBuilder: (context) => [
+                  PopupMenuItem(
+                    enabled: false,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(manager.userName ?? "User", style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.black)),
+                        Text(manager.userEmail ?? "", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuDivider(),
+                  const PopupMenuItem(
+                    value: 'logout',
+                    child: Row(
+                      children: [
+                        Icon(Icons.logout, color: Colors.red, size: 20),
+                        SizedBox(width: 8),
+                        Text("Logout", style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
+                onSelected: (value) {
+                  if (value == 'logout') {
+                    manager.logout();
+                  }
+                },
+              );
+            },
+          ),
+          
+          // EXISTING SORT BUTTON
           PopupMenuButton<String>(
             icon: const Icon(Icons.sort),
             onSelected: _sortPeriods,
@@ -253,6 +303,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
               PopupMenuItem(value: 'edited', child: Text('Recent Edits')),
             ],
           ),
+          
+          // EXISTING SETTINGS BUTTON
           IconButton(
             icon: const Icon(Icons.settings),
             onPressed: _openSettings,

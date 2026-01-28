@@ -1,35 +1,99 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'drive_service.dart'; // Make sure you have the DriveService file we created earlier
+import 'drive_service.dart';
 
 class DataManager extends ChangeNotifier {
   final DriveService _driveService = DriveService();
   
-  // --- STATE ---
-  bool _isLoading = true;
-  bool get isLoading => _isLoading;
+  // --- AUTH STATE ---
+  bool _isInitialized = false;
+  bool _isGuest = false;
   
-  // Settings
+  // --- SETTINGS STATE ---
+  bool _isLoading = true;
   bool _use24HourFormat = false;
   bool _isDarkMode = false;
   TimeOfDay _shiftStart = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _shiftEnd = const TimeOfDay(hour: 17, minute: 0);
 
-  // Getters for UI
+  // --- GETTERS ---
+  bool get isInitialized => _isInitialized;
+  bool get isLoading => _isLoading;
+  bool get isAuthenticated => _driveService.currentUser != null || _isGuest;
+  bool get isGuest => _isGuest;
+  
+  // User Info
+  String? get userEmail => _driveService.currentUser?.email;
+  String? get userName => _driveService.currentUser?.displayName;
+  String? get userPhoto => _driveService.currentUser?.photoUrl;
+
+  // Settings Getters
   bool get use24HourFormat => _use24HourFormat;
   bool get isDarkMode => _isDarkMode;
   TimeOfDay get shiftStart => _shiftStart;
   TimeOfDay get shiftEnd => _shiftEnd;
 
-  // --- INIT ---
-  Future<void> loadData() async {
-    _isLoading = true;
-    notifyListeners();
-
+  // --- 1. APP STARTUP ---
+  Future<void> initApp() async {
     final prefs = await SharedPreferences.getInstance();
+    
+    // A. Check for Guest Mode
+    _isGuest = prefs.getBool('isGuest') ?? false;
 
-    // 1. Load Local Settings
+    // B. Check for Google User (Silent Login)
+    if (!_isGuest) {
+      bool success = await _driveService.trySilentLogin();
+      if (success) {
+        await _pullSettingsFromCloud(); // Sync settings immediately
+      }
+    }
+
+    // C. Load Local Settings
+    await _loadLocalSettings(prefs);
+
+    _isInitialized = true;
+    _isLoading = false;
+    notifyListeners();
+  }
+
+  // --- 2. AUTH ACTIONS ---
+  Future<bool> loginWithGoogle() async {
+    bool success = await _driveService.signIn();
+    if (success) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool('isGuest', false);
+      _isGuest = false;
+      
+      // Pull Cloud Settings on login
+      await _pullSettingsFromCloud();
+      notifyListeners();
+    }
+    return success;
+  }
+
+  Future<void> continueAsGuest() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('isGuest', true);
+    _isGuest = true;
+    notifyListeners();
+  }
+
+  Future<void> logout() async {
+    final prefs = await SharedPreferences.getInstance();
+    
+    // Clear Auth Flags
+    await prefs.remove('isGuest');
+    _isGuest = false;
+    
+    // Sign out of Google
+    await _driveService.signOut();
+    
+    notifyListeners();
+  }
+
+  // --- 3. SETTINGS LOGIC ---
+  Future<void> _loadLocalSettings(SharedPreferences prefs) async {
     _use24HourFormat = prefs.getBool('use24HourFormat') ?? false;
     _isDarkMode = prefs.getBool('isDarkMode') ?? false;
     
@@ -44,36 +108,8 @@ class DataManager extends ChangeNotifier {
       final parts = endStr.split(':');
       _shiftEnd = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
     }
-
-    // 2. ATTEMPT CLOUD SYNC (Silent Background Sync)
-    // This pulls the latest settings/data from Drive without blocking the user
-    try {
-      final cloudData = await _driveService.fetchCloudData();
-      if (cloudData != null && cloudData.isNotEmpty) {
-        // Example: Only restoring settings for now. You can expand this to sync logs too!
-        final settings = cloudData.firstWhere(
-          (element) => element.containsKey('settings'), 
-          orElse: () => {},
-        );
-
-        if (settings.isNotEmpty && settings['settings'] != null) {
-          final s = settings['settings'];
-          _use24HourFormat = s['use24HourFormat'] ?? _use24HourFormat;
-          _isDarkMode = s['isDarkMode'] ?? _isDarkMode;
-          // You would parse TimeOfDay here similarly
-          notifyListeners(); // Update UI instantly with Cloud Data
-        }
-      }
-    } catch (e) {
-      print("Cloud Sync Warning: $e");
-    }
-
-    _isLoading = false;
-    notifyListeners();
   }
 
-  // --- UPDATE METHODS ---
-  
   Future<void> updateSettings({
     bool? isDark,
     bool? is24h,
@@ -99,15 +135,45 @@ class DataManager extends ChangeNotifier {
       await prefs.setString('shiftEnd', "${shiftEnd.hour}:${shiftEnd.minute}");
     }
 
-    notifyListeners(); // Update UI immediately
-    
-    // Trigger Background Cloud Sync
-    _syncToCloud(); 
+    notifyListeners();
+    _syncSettingsToCloud(); // Auto-save to cloud
   }
 
-  // --- SYNC ENGINE ---
-  Future<void> _syncToCloud() async {
-    // Construct the full data packet
+  // --- 4. CLOUD SYNC (SETTINGS ONLY) ---
+  Future<void> _pullSettingsFromCloud() async {
+    if (_isGuest) return;
+    try {
+      final cloudData = await _driveService.fetchCloudData();
+      if (cloudData != null && cloudData.isNotEmpty) {
+        final settingsMap = cloudData.firstWhere(
+          (element) => element.containsKey('settings'), 
+          orElse: () => {},
+        );
+
+        if (settingsMap.isNotEmpty && settingsMap['settings'] != null) {
+          final s = settingsMap['settings'];
+          _use24HourFormat = s['use24HourFormat'] ?? _use24HourFormat;
+          _isDarkMode = s['isDarkMode'] ?? _isDarkMode;
+          
+          if (s['shiftStart'] != null) {
+            final parts = s['shiftStart'].split(':');
+            _shiftStart = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+          }
+          if (s['shiftEnd'] != null) {
+            final parts = s['shiftEnd'].split(':');
+            _shiftEnd = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
+          }
+          notifyListeners();
+        }
+      }
+    } catch (e) {
+      print("Cloud Pull Error: $e");
+    }
+  }
+
+  Future<void> _syncSettingsToCloud() async {
+    if (_isGuest) return;
+    
     final Map<String, dynamic> settingsData = {
       'use24HourFormat': _use24HourFormat,
       'isDarkMode': _isDarkMode,
@@ -115,9 +181,10 @@ class DataManager extends ChangeNotifier {
       'shiftEnd': "${_shiftEnd.hour}:${_shiftEnd.minute}",
     };
 
+    // Note: This currently overwrites the whole file with just settings.
+    // If you add Syncing for Pay Periods later, you must merge lists here.
     final List<Map<String, dynamic>> fullBackup = [
       {'settings': settingsData},
-      // You can add {'logs': yourLogsList} here later!
     ];
 
     await _driveService.syncToCloud(fullBackup);
