@@ -66,11 +66,15 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   Future<void> _loadData() async {
     final prefs = await SharedPreferences.getInstance();
     
+    // 1. LOAD SETTINGS
     setState(() {
       _hideMoney = prefs.getBool('setting_hide_money') ?? false;
       _currencySymbol = prefs.getString('setting_currency_symbol') ?? '₱';
+      // Restore the "Red Dot" state from memory
+      _isUnsynced = prefs.getBool('is_unsynced') ?? false;
     });
 
+    // 2. LOAD DATA
     String? data = prefs.getString('pay_tracker_data');
     if (data == null) data = prefs.getString(kStorageKey); 
 
@@ -91,8 +95,13 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
     final String jsonData = jsonEncode(jsonList);
     
+    // Save Data Offline
     await prefs.setString(kStorageKey, jsonData);
     await prefs.setString('pay_tracker_data', jsonData);
+
+    // Save "Red Dot" State Offline
+    await prefs.setBool('is_unsynced', true);
+    
     setState(() { _isUnsynced = true; });
   }
 
@@ -103,16 +112,44 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
   void _performManualSync() async {
     final manager = Provider.of<DataManager>(context, listen: false);
+    
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 10), Text("Syncing...")]), duration: Duration(seconds: 1))
+      const SnackBar(
+        content: Row(children: [CircularProgressIndicator(strokeWidth: 2), SizedBox(width: 10), Text("Syncing...")]), 
+        duration: Duration(seconds: 1)
+      )
     );
+
     final List<Map<String, dynamic>> localJson = periods.map((e) => e.toJson()).toList();
+    
+    // Attempt Sync
     String result = await manager.smartSync(localJson);
-    await _loadData();
+
+    await _loadData(); // Reload to get any merged changes from cloud
+
     if (mounted) {
       ScaffoldMessenger.of(context).hideCurrentSnackBar();
-      if (!result.contains("Error")) setState(() => _isUnsynced = false);
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(result), backgroundColor: result.contains("Error") ? Colors.red : Colors.green));
+      
+      final prefs = await SharedPreferences.getInstance();
+
+      if (!result.contains("Error") && !result.toLowerCase().contains("fail")) {
+        // SUCCESS: Clear Red Dot
+        setState(() => _isUnsynced = false);
+        await prefs.setBool('is_unsynced', false);
+        
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(result), 
+          backgroundColor: Colors.green
+        ));
+      } else {
+        // FAIL (Offline): Keep Red Dot & Notify User
+        // We don't clear _isUnsynced here.
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text("Offline Mode: Data saved to device."), 
+          backgroundColor: Colors.orange,
+          duration: Duration(seconds: 2),
+        ));
+      }
     }
   }
 
@@ -162,6 +199,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       onDeleteAll: () async {
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove(kStorageKey); await prefs.remove('pay_tracker_data');
+          await prefs.remove('is_unsynced'); // Clear offline status too
           setState(() { periods = []; });
           if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
       },
@@ -211,7 +249,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
             title: const Text("Payroll", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5)),
             centerTitle: false, elevation: 0,
             actions: [
-              // 1. SYNC BUTTON
+              // 1. SYNC BUTTON (With Persistent Red Dot)
               Stack(
                 alignment: Alignment.topRight,
                 children: [
@@ -223,10 +261,11 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     Positioned(right: 8, top: 8, child: Container(width: 10, height: 10, decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2)))),
                 ],
               ),
+              
               // 2. SETTINGS
               IconButton(icon: const Icon(CupertinoIcons.settings), onPressed: _openSettings),
 
-              // 3. LOGOUT / PROFILE (RESTORED)
+              // 3. PROFILE / LOGOUT (RESTORED)
               PopupMenuButton<String>(
                 offset: const Offset(0, 45),
                 icon: CircleAvatar(
