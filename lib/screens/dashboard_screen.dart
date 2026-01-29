@@ -70,7 +70,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     setState(() {
       _hideMoney = prefs.getBool('setting_hide_money') ?? false;
       _currencySymbol = prefs.getString('setting_currency_symbol') ?? '₱';
-      // Restore the "Red Dot" state from memory
+      // Restore the "Red Dot" state from memory to persist across app restarts
       _isUnsynced = prefs.getBool('is_unsynced') ?? false;
     });
 
@@ -143,7 +143,6 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
         ));
       } else {
         // FAIL (Offline): Keep Red Dot & Notify User
-        // We don't clear _isUnsynced here.
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
           content: Text("Offline Mode: Data saved to device."), 
           backgroundColor: Colors.orange,
@@ -154,11 +153,17 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   }
 
   void _confirmDeletePeriod(int index) {
-    showConfirmationDialog(context: context, title: "Delete Cutoff?", content: "Are you sure you want to delete ${periods[index].name}?", isDestructive: true, onConfirm: () {
-      playClickSound(context);
-      setState(() { periods.removeAt(index); });
-      _saveData();
-    });
+    showConfirmationDialog(
+      context: context, 
+      title: "Delete Cutoff?", 
+      content: "Are you sure you want to delete ${periods[index].name}?", 
+      isDestructive: true, 
+      onConfirm: () {
+        playClickSound(context);
+        setState(() { periods.removeAt(index); });
+        _saveData();
+      }
+    );
   }
 
   void _editPeriodDates(PayPeriod period) async {
@@ -199,7 +204,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       onDeleteAll: () async {
           final prefs = await SharedPreferences.getInstance();
           await prefs.remove(kStorageKey); await prefs.remove('pay_tracker_data');
-          await prefs.remove('is_unsynced'); // Clear offline status too
+          await prefs.remove('is_unsynced'); 
           setState(() { periods = []; });
           if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
       },
@@ -219,8 +224,22 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     if (defaultEnd.isBefore(start)) defaultEnd = DateTime(start.year, start.month, lastDayOfMonth);
     DateTime? end = await showFastDatePicker(context, defaultEnd, minDate: start);
     if (end == null) return;
-    final newPeriod = PayPeriod(id: const Uuid().v4(), name: "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}", start: start, end: end, lastEdited: DateTime.now(), hourlyRate: 50.0, shifts: []);
-    setState(() { periods.insert(0, newPeriod); periods.sort((a, b) => b.start.compareTo(a.start)); });
+    
+    final newPeriod = PayPeriod(
+      id: const Uuid().v4(), 
+      name: "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}", 
+      start: start, 
+      end: end, 
+      lastEdited: DateTime.now(), 
+      hourlyRate: 50.0, 
+      shifts: []
+    );
+    
+    setState(() { 
+      periods.insert(0, newPeriod); 
+      periods.sort((a, b) => b.start.compareTo(a.start)); 
+    });
+    
     _saveData();
     _openPeriod(newPeriod);
   }
@@ -229,13 +248,18 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     playClickSound(context);
     period.lastEdited = DateTime.now();
     _saveData();
+    
+    // Pass the _saveData function to the child so it can save immediately
     await Navigator.push(context, MaterialPageRoute(builder: (_) => PeriodDetailScreen(
       period: period, 
       use24HourFormat: widget.use24HourFormat,
-      shiftStart: widget.shiftStart, shiftEnd: widget.shiftEnd,
+      shiftStart: widget.shiftStart, 
+      shiftEnd: widget.shiftEnd,
       hideMoney: _hideMoney,
       currencySymbol: _currencySymbol,
+      onSave: _saveData, // <--- CRITICAL FIX for immediate saving
     )));
+    
     _saveData();
     setState(() {});
   }
@@ -320,7 +344,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                           child: Row(
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
-                              // Left Side: Just Name and Shifts Count (CLEANER)
+                              // Left Side: Just Name and Shifts Count (Minimalist)
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,

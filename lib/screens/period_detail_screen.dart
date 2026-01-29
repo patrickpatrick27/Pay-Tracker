@@ -13,7 +13,8 @@ class PeriodDetailScreen extends StatefulWidget {
   final TimeOfDay shiftStart;
   final TimeOfDay shiftEnd;
   final bool hideMoney; 
-  final String currencySymbol; 
+  final String currencySymbol;
+  final VoidCallback onSave; // Callback for immediate saving
   
   const PeriodDetailScreen({
     super.key, 
@@ -23,6 +24,7 @@ class PeriodDetailScreen extends StatefulWidget {
     required this.shiftEnd,
     required this.hideMoney,
     required this.currencySymbol,
+    required this.onSave,
   });
 
   @override
@@ -42,6 +44,12 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
   String _getMoneyText(double amount) {
     if (widget.hideMoney) return "****.**";
     return "${widget.currencySymbol}${currencyFormatter.format(amount)}";
+  }
+
+  // Trigger immediate save via callback
+  void _saveChanges() {
+    widget.period.lastEdited = DateTime.now();
+    widget.onSave(); 
   }
 
   void _showShiftDialog({Shift? existingShift}) async {
@@ -188,17 +196,27 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
             widget.period.shifts.add(Shift(id: const Uuid().v4(), date: tempDate, rawTimeIn: tIn, rawTimeOut: tOut, isManualPay: isManual, manualAmount: double.tryParse(manualCtrl.text) ?? 0.0));
           }
           widget.period.shifts.sort((a, b) => b.date.compareTo(a.date));
-          widget.period.lastEdited = DateTime.now();
+          
+          _saveChanges(); // <--- IMMEDIATE SAVE TRIGGER
         });
       }
     });
   }
 
   void _confirmDeleteShift(int index) {
-    showConfirmationDialog(context: context, title: "Delete Shift?", content: "Remove this work day?", isDestructive: true, onConfirm: () {
-      playClickSound(context);
-      setState(() { widget.period.shifts.removeAt(index); widget.period.lastEdited = DateTime.now(); });
-    });
+    showConfirmationDialog(
+      context: context, 
+      title: "Delete Shift?", 
+      content: "Remove this work day?", 
+      isDestructive: true, 
+      onConfirm: () {
+        playClickSound(context);
+        setState(() { 
+          widget.period.shifts.removeAt(index); 
+          _saveChanges(); // <--- IMMEDIATE SAVE TRIGGER
+        });
+      }
+    );
   }
 
   @override
@@ -266,7 +284,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                           onChanged: (val) {
                             setState(() {
                               widget.period.hourlyRate = double.tryParse(val) ?? 50;
-                              widget.period.lastEdited = DateTime.now();
+                              _saveChanges(); // <--- IMMEDIATE SAVE TRIGGER
                             });
                           },
                         ),
