@@ -48,12 +48,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TimeOfDay _localShiftStart;
   late TimeOfDay _localShiftEnd;
   final List<String> _currencies = ['₱', '\$', '€', '£', '¥', '₩', '₹', 'Rp'];
+  bool _updateAvailable = false; 
 
   @override
   void initState() {
     super.initState();
     _localShiftStart = widget.shiftStart;
     _localShiftEnd = widget.shiftEnd;
+    _checkForUpdates();
+  }
+
+  Future<void> _checkForUpdates() async {
+    // Silent check to show the badge
+    bool available = await GithubUpdateService.isUpdateAvailable();
+    if (mounted) {
+      setState(() {
+        _updateAvailable = available;
+      });
+    }
   }
 
   void _updateTime(bool isStart, TimeOfDay newTime) {
@@ -67,56 +79,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // --- TWO-STEP DELETE DIALOG ---
-  void _showDeleteOptions(BuildContext context) {
-    final manager = Provider.of<DataManager>(context, listen: false);
-    
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("Clear Data"),
-        content: const Text("Choose how you want to delete your data."),
-        actions: [
-          // OPTION 1: CLEAR DEVICE ONLY
-          TextButton(
-            child: const Text("Clear Device Only"),
-            onPressed: () {
-              Navigator.pop(ctx);
-              showConfirmationDialog(
-                context: context, 
-                title: "Clear Local Data?", 
-                content: "This will remove all payrolls from this phone. Cloud data will remain.", 
-                isDestructive: true,
-                onConfirm: () async {
-                  await manager.clearLocalData();
-                  widget.onDeleteAll(); // Updates Dashboard UI
-                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Local data cleared.")));
-                }
-              );
-            }, 
-          ),
-          // OPTION 2: DELETE EVERYWHERE
-          FilledButton(
-            style: FilledButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text("Delete Everywhere"),
-            onPressed: () {
-              Navigator.pop(ctx);
-              showConfirmationDialog(
-                context: context, 
-                title: "Delete Everything?", 
-                content: "WARNING: This will permanently delete data from your device AND Google Drive. This cannot be undone.", 
-                isDestructive: true,
-                onConfirm: () async {
-                  await manager.deleteCloudData();
-                  await manager.logout(); // Clears local and logs out
-                  widget.onDeleteAll();
-                  if (mounted) Navigator.pop(context); // Go back to login
-                }
-              );
-            }, 
-          ),
-        ],
-      )
+  // --- SEPARATE DELETE ACTIONS ---
+
+  void _confirmClearLocal(BuildContext context) {
+    showConfirmationDialog(
+      context: context, 
+      title: "Clear Device Data?", 
+      content: "This will remove all payrolls from THIS phone only. Your Google Drive backup will remain safe.", 
+      isDestructive: true,
+      onConfirm: () async {
+        final manager = Provider.of<DataManager>(context, listen: false);
+        await manager.clearLocalData();
+        widget.onDeleteAll(); // Trigger reload in dashboard
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Device data cleared.")));
+      }
+    );
+  }
+
+  void _confirmDeleteCloud(BuildContext context) {
+    showConfirmationDialog(
+      context: context, 
+      title: "Delete Cloud Backup?", 
+      content: "WARNING: This will permanently delete your data from Google Drive. If you lose your phone, this data is gone forever.", 
+      isDestructive: true,
+      onConfirm: () async {
+        final manager = Provider.of<DataManager>(context, listen: false);
+        // Show loading snackbar
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Deleting from Drive..."), duration: Duration(seconds: 1)));
+        
+        bool success = await manager.deleteCloudData();
+        
+        if (mounted) {
+          ScaffoldMessenger.of(context).hideCurrentSnackBar();
+          if (success) {
+            // Also log out after wiping cloud to reset state
+            await manager.logout();
+            widget.onDeleteAll();
+            Navigator.pop(context); // Close settings to return to login
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cloud backup deleted."), backgroundColor: Colors.red));
+          } else {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to delete cloud data. Check internet.")));
+          }
+        }
+      }
     );
   }
 
@@ -154,7 +159,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final manager = Provider.of<DataManager>(context); // Listen to settings
+    final manager = Provider.of<DataManager>(context);
     final Color bg = Theme.of(context).cardColor;
     
     return Scaffold(
@@ -168,7 +173,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 20),
           _buildSectionHeader("CALCULATIONS"),
-          // NEW TOGGLES
           SwitchListTile(
             title: const Text("Deduct Late Minutes"),
             subtitle: const Text("Subtract pay for late arrivals"),
@@ -202,16 +206,49 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
           const SizedBox(height: 20),
           _buildSectionHeader("DATA MANAGEMENT"),
-          ListTile(tileColor: bg, leading: const Icon(Icons.system_update, color: Colors.blue), title: const Text("Check for Updates"), onTap: () { playClickSound(context); GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: true); }),
+          ListTile(
+            tileColor: bg, 
+            leading: const Icon(Icons.system_update, color: Colors.blue), 
+            title: const Text("Check for Updates"), 
+            // INDICATOR LOGIC
+            trailing: _updateAvailable 
+                ? Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), 
+                    decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(8)), 
+                    child: const Text("NEW", style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold))
+                  ) 
+                : null,
+            onTap: () { 
+              playClickSound(context); 
+              GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: true); 
+            },
+          ),
           ListTile(tileColor: bg, leading: const Icon(Icons.description, color: Colors.purple), title: const Text("Copy Text Report"), subtitle: const Text("For humans (WhatsApp/Email)", style: TextStyle(fontSize: 10)), onTap: widget.onExportReport),
           ListTile(tileColor: bg, leading: const Icon(Icons.save, color: Colors.teal), title: const Text("Backup Data (JSON)"), subtitle: const Text("For switching apps (Save this code!)", style: TextStyle(fontSize: 10)), onTap: widget.onBackup),
           ListTile(tileColor: bg, leading: const Icon(Icons.restore, color: Colors.orange), title: const Text("Restore Backup"), onTap: () { playClickSound(context); _showRestoreDialog(context); }),
+          
+          const SizedBox(height: 20),
+          _buildSectionHeader("DANGER ZONE"),
+          
+          // SEPARATE UI FOR DELETE OPTIONS
           ListTile(
             tileColor: bg, 
-            leading: const Icon(Icons.delete_forever, color: Colors.red), 
-            title: const Text("Clear Data...", style: TextStyle(color: Colors.red)), 
-            onTap: () => _showDeleteOptions(context)
+            leading: const Icon(Icons.delete_outline, color: Colors.red), 
+            title: const Text("Clear Device Data", style: TextStyle(color: Colors.red)),
+            subtitle: const Text("Removes data from this phone only", style: TextStyle(fontSize: 10, color: Colors.grey)),
+            onTap: () => _confirmClearLocal(context),
           ),
+          
+          if (manager.isAuthenticated && !manager.isGuest)
+            ListTile(
+              tileColor: bg, 
+              leading: const Icon(Icons.cloud_off, color: Colors.red), 
+              title: const Text("Delete Cloud Backup", style: TextStyle(color: Colors.red)),
+              subtitle: const Text("Permanently removes data from Drive", style: TextStyle(fontSize: 10, color: Colors.grey)),
+              onTap: () => _confirmDeleteCloud(context),
+            ),
+            
+          const SizedBox(height: 40),
         ],
       ),
     );

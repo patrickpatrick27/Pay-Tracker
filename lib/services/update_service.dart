@@ -13,13 +13,36 @@ class GithubUpdateService {
   static const String _repo = "payout_app";
   // ----------------------------------------
 
+  // --- NEW: Silent Check for Badge Indicator ---
+  static Future<bool> isUpdateAvailable() async {
+    try {
+      PackageInfo packageInfo = await PackageInfo.fromPlatform();
+      String currentVersion = packageInfo.version.split('+')[0];
+
+      final response = await http.get(
+        Uri.parse('https://api.github.com/repos/$_owner/$_repo/releases/latest'),
+      );
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        String latestVersion = data['tag_name'].toString().replaceAll('v', '');
+        
+        // Return true if latest is newer than current
+        return _isNewer(latestVersion, currentVersion);
+      }
+    } catch (e) {
+      print("⚠️ Silent update check failed: $e");
+    }
+    return false;
+  }
+
+  // --- EXISTING: Check with Dialog UI ---
   static Future<void> checkForUpdate(BuildContext context, {bool showNoUpdateMsg = false}) async {
     print("🔍 [UpdateService] Checking for updates...");
     
     try {
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
-      String currentVersion = packageInfo.version;
-      currentVersion = currentVersion.split('+')[0];
+      String currentVersion = packageInfo.version.split('+')[0];
       
       print("📱 Current Version: $currentVersion");
 
@@ -59,10 +82,19 @@ class GithubUpdateService {
 
         if (isNewer) {
           if (context.mounted) _showUpdateDialog(context, latestVersion, apkUrl);
+        } else if (showNoUpdateMsg && context.mounted) {
+           ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text("You are on the latest version!"), backgroundColor: Colors.green)
+           );
         }
       }
     } catch (e) {
       print("❌ Update Check Failed: $e");
+      if (showNoUpdateMsg && context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Update check failed: $e"), backgroundColor: Colors.red)
+        );
+      }
     }
   }
 

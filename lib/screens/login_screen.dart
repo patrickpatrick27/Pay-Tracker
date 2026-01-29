@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_manager.dart';
+import '../services/update_service.dart'; // Ensure this is imported
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -11,6 +12,15 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Prompt for update on launch/login screen
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: false);
+    });
+  }
 
   void _handleGoogleLogin() async {
     setState(() => _isLoading = true);
@@ -34,7 +44,6 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // Dark Mode Logic
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color bgColor = Theme.of(context).scaffoldBackgroundColor;
     final Color textColor = isDark ? Colors.white : Colors.black87;
@@ -50,34 +59,20 @@ class _LoginScreenState extends State<LoginScreen> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               const Spacer(),
-              // Logo
-              const Icon(
-                Icons.account_balance_wallet_rounded,
-                size: 80,
-                color: Color(0xFF3F51B5),
-              ),
+              const Icon(Icons.account_balance_wallet_rounded, size: 80, color: Color(0xFF3F51B5)),
               const SizedBox(height: 20),
               Text(
-                "Pay Tracker",
+                "Payroll Tracker", // Updated Name
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 28,
-                  fontWeight: FontWeight.bold,
-                  color: textColor,
-                ),
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor),
               ),
               const SizedBox(height: 10),
               Text(
                 "Track your hours. Sync your pay.\nNever miss a cent.",
                 textAlign: TextAlign.center,
-                style: TextStyle(
-                  fontSize: 16,
-                  color: subTextColor,
-                ),
+                style: TextStyle(fontSize: 16, color: subTextColor),
               ),
               const Spacer(),
-              
-              // Google Button
               if (_isLoading)
                 const Center(child: CircularProgressIndicator())
               else ...[
@@ -94,18 +89,13 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                 ),
                 const SizedBox(height: 15),
-                // Guest Button
                 TextButton(
                   onPressed: _handleGuestLogin,
                   child: Text("Continue as Guest", style: TextStyle(color: subTextColor)),
                 ),
               ],
               const Spacer(),
-              Text(
-                "By continuing, you agree to our Terms & Privacy Policy.",
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 12, color: subTextColor),
-              ),
+              Text("By continuing, you agree to our Terms & Privacy Policy.", textAlign: TextAlign.center, style: TextStyle(fontSize: 12, color: subTextColor)),
               const SizedBox(height: 20),
             ],
           ),
