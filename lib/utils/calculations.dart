@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import '../models/data_models.dart';
 
 class PayrollCalculator {
   
@@ -40,33 +39,24 @@ class PayrollCalculator {
     return 0;
   }
 
-  static double calculateLateDeductionAmount(int lateMinutes, double hourlyRate) {
-    // Formula: (Hourly Rate / 60) * Late Minutes
-    if (lateMinutes <= 0) return 0.0;
-    double minuteRate = hourlyRate / 60.0;
-    return minuteRate * lateMinutes;
-  }
+  // --- HOURS CALCULATION (Pure logic, no Shift object dependency) ---
 
-  // --- PAYROLL HOURS CALCULATION ---
-
-  static double getRegularHours(Shift shift, TimeOfDay globalStart, TimeOfDay globalEnd) {
-    if (shift.isManualPay) return 0;
-
+  static double calculateRegularHours(TimeOfDay rawIn, TimeOfDay rawOut, TimeOfDay shiftStart, TimeOfDay shiftEnd) {
     // 1. Get Rounded Times
-    TimeOfDay paidIn = roundTime(shift.rawTimeIn, isStart: true);
-    TimeOfDay paidOut = roundTime(shift.rawTimeOut, isStart: false);
+    TimeOfDay paidIn = roundTime(rawIn, isStart: true);
+    TimeOfDay paidOut = roundTime(rawOut, isStart: false);
 
     // 2. Ensure Paid Time In isn't earlier than Global Shift Start
     double rVal = timeToDouble(paidIn);
-    double sVal = timeToDouble(globalStart);
-    if (rVal < sVal) paidIn = globalStart;
+    double sVal = timeToDouble(shiftStart);
+    if (rVal < sVal) paidIn = shiftStart;
 
     // 3. Calculate Duration
     double start = timeToDouble(paidIn);
     double end = timeToDouble(paidOut);
-    double limit = timeToDouble(globalEnd);
+    double limit = timeToDouble(shiftEnd);
 
-    // Cap at shift end
+    // Cap at shift end (Regular hours stop at shift end)
     double actualEnd = (end > limit) ? limit : end;
     
     // Handle overnight shifts (crossing midnight)
@@ -80,42 +70,15 @@ class PayrollCalculator {
     return duration > 0 ? duration : 0;
   }
 
-  static double getOvertimeHours(Shift shift, TimeOfDay globalEnd) {
-    if (shift.isManualPay) return 0;
-    
-    TimeOfDay paidOut = roundTime(shift.rawTimeOut, isStart: false);
+  static double calculateOvertimeHours(TimeOfDay rawIn, TimeOfDay rawOut, TimeOfDay shiftEnd) {
+    TimeOfDay paidOut = roundTime(rawOut, isStart: false);
     double end = timeToDouble(paidOut);
-    double limit = timeToDouble(globalEnd);
+    double limit = timeToDouble(shiftEnd);
 
+    // Handle overnight logic for OT if needed, but standard logic:
     if (end > limit) {
       return end - limit;
     }
-    return 0;
-  }
-
-  // --- TOTALS ---
-
-  static double calculateTotalPay(PayPeriod period, TimeOfDay start, TimeOfDay end) {
-    double total = 0;
-    
-    for (var shift in period.shifts) {
-      if (shift.isManualPay) {
-        total += shift.manualAmount;
-      } else {
-        // Base Pay
-        double regHours = getRegularHours(shift, start, end);
-        double otHours = getOvertimeHours(shift, end);
-        double grossShiftPay = (regHours * period.hourlyRate) + (otHours * period.hourlyRate * 1.25);
-
-        // Deduct Late (Exact Minutes)
-        // Note: Regular Hours calculation often rounds time, but Lates are usually exact.
-        // We calculate late deduction separately and subtract it from the Gross.
-        int lateMins = calculateLateMinutes(shift.rawTimeIn, start);
-        double lateDeduction = calculateLateDeductionAmount(lateMins, period.hourlyRate);
-
-        total += (grossShiftPay - lateDeduction);
-      }
-    }
-    return total;
+    return 0.0;
   }
 }

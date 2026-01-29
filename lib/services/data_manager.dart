@@ -13,36 +13,39 @@ class DataManager extends ChangeNotifier {
 
   GoogleSignInAccount? _currentUser;
   bool _isInitialized = false;
-  bool _isGuestMode = false; // NEW: Explicit Guest State
+  bool _isGuestMode = false;
   
-  // Settings State
+  // Settings
   bool _isDarkMode = false;
   bool _use24HourFormat = false;
+  bool _enableLateDeductions = true; // NEW
+  bool _enableOvertime = true;       // NEW
   TimeOfDay _shiftStart = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _shiftEnd = const TimeOfDay(hour: 17, minute: 0);
 
   // Getters
   bool get isInitialized => _isInitialized;
-  // CRITICAL FIX: Authenticated if User is logged in OR Guest Mode is active
   bool get isAuthenticated => _currentUser != null || _isGuestMode;
   bool get isGuest => _isGuestMode; 
-  
   String? get userEmail => _currentUser?.email;
   String? get userPhoto => _currentUser?.photoUrl;
   
   bool get isDarkMode => _isDarkMode;
   bool get use24HourFormat => _use24HourFormat;
+  bool get enableLateDeductions => _enableLateDeductions;
+  bool get enableOvertime => _enableOvertime;
   TimeOfDay get shiftStart => _shiftStart;
   TimeOfDay get shiftEnd => _shiftEnd;
 
-  // --- 1. INITIALIZATION ---
   Future<void> initApp() async {
     final prefs = await SharedPreferences.getInstance();
     
-    // Load Local Settings
+    // Load Settings
     _isDarkMode = prefs.getBool(kSettingDarkMode) ?? false;
     _use24HourFormat = prefs.getBool(kSetting24h) ?? false;
-    _isGuestMode = prefs.getBool('is_guest_mode') ?? false; // Restore Guest State
+    _isGuestMode = prefs.getBool('is_guest_mode') ?? false;
+    _enableLateDeductions = prefs.getBool('enable_late') ?? true;
+    _enableOvertime = prefs.getBool('enable_ot') ?? true;
     
     int startH = prefs.getInt('${kSettingShiftStart}_h') ?? 8;
     int startM = prefs.getInt('${kSettingShiftStart}_m') ?? 0;
@@ -52,7 +55,7 @@ class DataManager extends ChangeNotifier {
     int endM = prefs.getInt('${kSettingShiftEnd}_m') ?? 0;
     _shiftEnd = TimeOfDay(hour: endH, minute: endM);
 
-    // Try Silent Login (only if not in guest mode)
+    // Try Silent Login (if not guest)
     if (!_isGuestMode) {
       try {
         _currentUser = await _googleSignIn.signInSilently();
@@ -65,30 +68,24 @@ class DataManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  // --- 2. AUTHENTICATION ---
   Future<bool> loginWithGoogle() async {
     try {
       _currentUser = await _googleSignIn.signIn();
-      
       if (_currentUser != null) {
-        // Turn off guest mode
         _isGuestMode = false;
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('is_guest_mode', false);
 
-        // AUTO-FETCH: Pull cloud data immediately
+        // Auto-Fetch Cloud Data on Login
         String? cloudJson = await fetchCloudDataOnly();
         if (cloudJson != null && cloudJson.isNotEmpty) {
            await prefs.setString('pay_tracker_data', cloudJson);
-           // Also save to legacy key for compatibility
            await prefs.setString(kStorageKey, cloudJson);
         }
       }
-
-      notifyListeners(); // Updates UI to Dashboard
+      notifyListeners();
       return _currentUser != null;
     } catch (e) {
-      print("Login Error: $e");
       return false;
     }
   }
@@ -97,33 +94,62 @@ class DataManager extends ChangeNotifier {
     await _googleSignIn.signOut();
     _currentUser = null;
     _isGuestMode = false;
-    
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_guest_mode', false);
-    
-    // Clear local data for privacy protection
-    await prefs.remove('pay_tracker_data');
-    await prefs.remove(kStorageKey);
-    await prefs.remove('is_unsynced');
-    
+    await clearLocalData();
     notifyListeners();
   }
 
   void continueAsGuest() async {
     _currentUser = null;
     _isGuestMode = true;
-    
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_guest_mode', true);
-    
-    notifyListeners(); // Updates UI to Dashboard
+    notifyListeners();
   }
 
-  // --- 3. SETTINGS & SYNC ---
-  void updateSettings({bool? isDark, bool? is24h, TimeOfDay? shiftStart, TimeOfDay? shiftEnd}) async {
+  // --- DATA MANAGEMENT ---
+
+  Future<void> clearLocalData() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('pay_tracker_data');
+    await prefs.remove(kStorageKey);
+    await prefs.remove('is_unsynced');
+  }
+
+  Future<bool> deleteCloudData() async {
+    if (_currentUser == null) return false;
+    try {
+      final driveApi = await _getDriveApi();
+      if (driveApi == null) return false;
+      
+      final fileList = await driveApi.files.list(
+        q: "name = 'pay_tracker_backup.json' and 'appDataFolder' in parents",
+        spaces: 'appDataFolder',
+      );
+
+      if (fileList.files != null) {
+        for (var file in fileList.files!) {
+          await driveApi.files.delete(file.id!);
+        }
+      }
+      return true;
+    } catch (e) {
+      print("Delete Cloud Error: $e");
+      return false;
+    }
+  }
+
+  void updateSettings({
+    bool? isDark, bool? is24h, bool? enableLate, bool? enableOt,
+    TimeOfDay? shiftStart, TimeOfDay? shiftEnd
+  }) async {
     final prefs = await SharedPreferences.getInstance();
     if (isDark != null) { _isDarkMode = isDark; prefs.setBool(kSettingDarkMode, isDark); }
     if (is24h != null) { _use24HourFormat = is24h; prefs.setBool(kSetting24h, is24h); }
+    if (enableLate != null) { _enableLateDeductions = enableLate; prefs.setBool('enable_late', enableLate); }
+    if (enableOt != null) { _enableOvertime = enableOt; prefs.setBool('enable_ot', enableOt); }
+    
     if (shiftStart != null) { 
       _shiftStart = shiftStart; 
       prefs.setInt('${kSettingShiftStart}_h', shiftStart.hour);
@@ -137,6 +163,7 @@ class DataManager extends ChangeNotifier {
     notifyListeners();
   }
 
+  // --- GOOGLE DRIVE LOGIC ---
   Future<drive.DriveApi?> _getDriveApi() async {
     if (_currentUser == null) return null;
     final headers = await _currentUser!.authHeaders;
@@ -149,12 +176,7 @@ class DataManager extends ChangeNotifier {
     try {
       final driveApi = await _getDriveApi();
       if (driveApi == null) return null;
-
-      final fileList = await driveApi.files.list(
-        q: "name = 'pay_tracker_backup.json' and 'appDataFolder' in parents",
-        spaces: 'appDataFolder',
-      );
-
+      final fileList = await driveApi.files.list(q: "name = 'pay_tracker_backup.json' and 'appDataFolder' in parents", spaces: 'appDataFolder');
       if (fileList.files?.isNotEmpty == true) {
         final fileId = fileList.files!.first.id!;
         final media = await driveApi.files.get(fileId, downloadOptions: drive.DownloadOptions.fullMedia) as drive.Media;
@@ -162,9 +184,7 @@ class DataManager extends ChangeNotifier {
         await media.stream.listen((data) => dataStore.addAll(data)).asFuture();
         return utf8.decode(dataStore);
       }
-    } catch (e) {
-      print("Fetch Cloud Error: $e");
-    }
+    } catch (e) { print(e); }
     return null;
   }
 
@@ -173,31 +193,16 @@ class DataManager extends ChangeNotifier {
     try {
       final driveApi = await _getDriveApi();
       if (driveApi == null) return false;
-
       final jsonString = jsonEncode(localData);
-      final mediaContent = drive.Media(
-        Stream.value(utf8.encode(jsonString)),
-        utf8.encode(jsonString).length,
-      );
-
-      final fileList = await driveApi.files.list(
-        q: "name = 'pay_tracker_backup.json' and 'appDataFolder' in parents",
-        spaces: 'appDataFolder',
-      );
-
+      final mediaContent = drive.Media(Stream.value(utf8.encode(jsonString)), utf8.encode(jsonString).length);
+      final fileList = await driveApi.files.list(q: "name = 'pay_tracker_backup.json' and 'appDataFolder' in parents", spaces: 'appDataFolder');
       if (fileList.files?.isNotEmpty == true) {
         await driveApi.files.update(drive.File(), fileList.files!.first.id!, uploadMedia: mediaContent);
       } else {
-        await driveApi.files.create(
-          drive.File(name: 'pay_tracker_backup.json', parents: ['appDataFolder']),
-          uploadMedia: mediaContent,
-        );
+        await driveApi.files.create(drive.File(name: 'pay_tracker_backup.json', parents: ['appDataFolder']), uploadMedia: mediaContent);
       }
       return true;
-    } catch (e) {
-      print("Sync Upload Error: $e");
-      return false;
-    }
+    } catch (e) { return false; }
   }
 
   Future<String> smartSync(List<Map<String, dynamic>> localData) async {
@@ -208,9 +213,7 @@ class DataManager extends ChangeNotifier {
         return success ? "Cloud backup created." : "Offline: Saved to device.";
       }
       return "Cloud data found.";
-    } catch (e) {
-      return "Error: $e";
-    }
+    } catch (e) { return "Error: $e"; }
   }
 }
 

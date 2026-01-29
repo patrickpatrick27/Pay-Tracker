@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
-import '../utils/helpers.dart';
-import '../utils/calculations.dart'; // Import the new calculator
+import '../utils/calculations.dart'; 
 
 class Shift {
   String id;
@@ -53,14 +52,15 @@ class Shift {
     );
   }
 
-  // --- SHORTCUTS TO CALCULATOR (Single Shift) ---
-  // These allow you to do shift.getRegularHours() if needed
+  // --- DEPENDENCY RESTORED ---
   double getRegularHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    return PayrollCalculator.getRegularHours(this, globalStart, globalEnd);
+    if (isManualPay) return 0;
+    return PayrollCalculator.calculateRegularHours(rawTimeIn, rawTimeOut, globalStart, globalEnd);
   }
 
   double getOvertimeHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    return PayrollCalculator.getOvertimeHours(this, globalEnd);
+    if (isManualPay) return 0;
+    return PayrollCalculator.calculateOvertimeHours(rawTimeIn, rawTimeOut, globalEnd);
   }
 }
 
@@ -94,34 +94,44 @@ class PayPeriod {
       id: json['id'], name: json['name'],
       start: DateTime.parse(json['start']), end: DateTime.parse(json['end']),
       lastEdited: json['lastEdited'] != null ? DateTime.parse(json['lastEdited']) : DateTime.now(),
-      hourlyRate: json['hourlyRate'].toDouble(),
+      hourlyRate: (json['hourlyRate'] as num).toDouble(),
       shifts: (json['shifts'] as List).map((s) => Shift.fromJson(s)).toList(),
     );
   }
 
-  // --- RESTORED CONVENIENCE METHODS (Bridging to Calculator) ---
+  // --- TOTAL CALCULATION (Using Calculator Logic) ---
+  double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool enableLate = true, bool enableOt = true}) {
+    double total = 0;
+    for (var shift in shifts) {
+      if (shift.isManualPay) {
+        total += shift.manualAmount;
+        continue;
+      }
 
-  // 1. Total Pay
-  double getTotalPay(TimeOfDay startShift, TimeOfDay endShift) {
-    return PayrollCalculator.calculateTotalPay(this, startShift, endShift);
+      // Delegate math to Shift methods (which call Calculator)
+      double hours = shift.getRegularHours(shiftStart, shiftEnd);
+      double ot = enableOt ? shift.getOvertimeHours(shiftStart, shiftEnd) : 0.0;
+      
+      double pay = (hours * hourlyRate) + (ot * hourlyRate * 1.25);
+
+      if (enableLate) {
+        // Delegate late calculation to Calculator
+        int lateMins = PayrollCalculator.calculateLateMinutes(shift.rawTimeIn, shiftStart);
+        if (lateMins > 0) {
+          pay -= (lateMins / 60.0) * hourlyRate;
+        }
+      }
+      total += pay;
+    }
+    return total;
   }
 
-  // 2. Total Regular Hours
-  double getTotalRegularHours(TimeOfDay startShift, TimeOfDay endShift) {
-    double sum = 0;
-    for (var s in shifts) {
-      sum += PayrollCalculator.getRegularHours(s, startShift, endShift);
-    }
-    return sum;
+  double getTotalRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
+    return shifts.fold(0, (sum, s) => sum + s.getRegularHours(shiftStart, shiftEnd));
   }
   
-  // 3. Total Overtime Hours
-  double getTotalOvertimeHours(TimeOfDay startShift, TimeOfDay endShift) {
-    double sum = 0;
-    for (var s in shifts) {
-      sum += PayrollCalculator.getOvertimeHours(s, endShift);
-    }
-    return sum;
+  double getTotalOvertimeHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
+    return shifts.fold(0, (sum, s) => sum + s.getOvertimeHours(shiftStart, shiftEnd));
   }
 
   void updateName() {

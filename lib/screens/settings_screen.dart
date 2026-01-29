@@ -1,28 +1,26 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/cupertino.dart'; // iOS icons
+import 'package:flutter/cupertino.dart'; 
+import 'package:provider/provider.dart';
 import '../services/update_service.dart';
 import '../utils/helpers.dart';
 import '../widgets/custom_pickers.dart';
+import '../services/data_manager.dart';
 
 class SettingsScreen extends StatefulWidget {
   final bool isDarkMode;
   final bool use24HourFormat;
-  final bool hideMoney; // NEW
-  final String currencySymbol; // NEW
+  final bool hideMoney;
+  final String currencySymbol;
   final TimeOfDay shiftStart;
   final TimeOfDay shiftEnd;
   
-  // Updated callback
   final Function({
-    bool? isDark, 
-    bool? is24h, 
-    bool? hideMoney, 
-    String? currencySymbol,
-    TimeOfDay? shiftStart, 
-    TimeOfDay? shiftEnd
+    bool? isDark, bool? is24h, bool? hideMoney, 
+    String? currencySymbol, TimeOfDay? shiftStart, TimeOfDay? shiftEnd,
+    bool? enableLate, bool? enableOt
   }) onUpdate;
 
-  final VoidCallback onDeleteAll;
+  final VoidCallback onDeleteAll; 
   final VoidCallback onExportReport;
   final VoidCallback onBackup;
   final Function(String) onRestore;
@@ -69,6 +67,59 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // --- TWO-STEP DELETE DIALOG ---
+  void _showDeleteOptions(BuildContext context) {
+    final manager = Provider.of<DataManager>(context, listen: false);
+    
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("Clear Data"),
+        content: const Text("Choose how you want to delete your data."),
+        actions: [
+          // OPTION 1: CLEAR DEVICE ONLY
+          TextButton(
+            child: const Text("Clear Device Only"),
+            onPressed: () {
+              Navigator.pop(ctx);
+              showConfirmationDialog(
+                context: context, 
+                title: "Clear Local Data?", 
+                content: "This will remove all payrolls from this phone. Cloud data will remain.", 
+                isDestructive: true,
+                onConfirm: () async {
+                  await manager.clearLocalData();
+                  widget.onDeleteAll(); // Updates Dashboard UI
+                  if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Local data cleared.")));
+                }
+              );
+            }, 
+          ),
+          // OPTION 2: DELETE EVERYWHERE
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text("Delete Everywhere"),
+            onPressed: () {
+              Navigator.pop(ctx);
+              showConfirmationDialog(
+                context: context, 
+                title: "Delete Everything?", 
+                content: "WARNING: This will permanently delete data from your device AND Google Drive. This cannot be undone.", 
+                isDestructive: true,
+                onConfirm: () async {
+                  await manager.deleteCloudData();
+                  await manager.logout(); // Clears local and logs out
+                  widget.onDeleteAll();
+                  if (mounted) Navigator.pop(context); // Go back to login
+                }
+              );
+            }, 
+          ),
+        ],
+      )
+    );
+  }
+
   void _showRestoreDialog(BuildContext context) {
     final TextEditingController _controller = TextEditingController();
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
@@ -86,22 +137,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
               controller: _controller,
               maxLines: 5,
               style: TextStyle(fontSize: 12, color: isDark ? Colors.white : Colors.black),
-              decoration: const InputDecoration(
-                border: OutlineInputBorder(),
-                hintText: '[{"id": "...", "name": "..."}]',
-                hintStyle: TextStyle(color: Colors.grey),
-              ),
+              decoration: const InputDecoration(border: OutlineInputBorder(), hintText: '[{"id": "...", "name": "..."}]', hintStyle: TextStyle(color: Colors.grey)),
             ),
           ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancel")),
           FilledButton(
-            onPressed: () {
-              String data = _controller.text;
-              Navigator.pop(ctx);
-              if (data.isNotEmpty) widget.onRestore(data);
-            }, 
+            onPressed: () { String data = _controller.text; Navigator.pop(ctx); if (data.isNotEmpty) widget.onRestore(data); }, 
             child: const Text("Restore Data")
           ),
         ],
@@ -111,6 +154,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final manager = Provider.of<DataManager>(context); // Listen to settings
     final Color bg = Theme.of(context).cardColor;
     
     return Scaffold(
@@ -121,95 +165,52 @@ class _SettingsScreenState extends State<SettingsScreen> {
           _buildSectionHeader("WORK SCHEDULE"),
           _buildTimeTile("Shift Start Time", _localShiftStart, (t) => _updateTime(true, t)),
           _buildTimeTile("Shift End Time", _localShiftEnd, (t) => _updateTime(false, t)),
-          const Padding(
-            padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            child: Text(
-              "Note: Hours worked after the Shift End Time are counted as Overtime.",
-              style: TextStyle(fontSize: 12, color: Colors.grey),
-            ),
-          ),
           
           const SizedBox(height: 20),
+          _buildSectionHeader("CALCULATIONS"),
+          // NEW TOGGLES
+          SwitchListTile(
+            title: const Text("Deduct Late Minutes"),
+            subtitle: const Text("Subtract pay for late arrivals"),
+            value: manager.enableLateDeductions,
+            tileColor: bg,
+            onChanged: (val) => widget.onUpdate(enableLate: val),
+          ),
+          SwitchListTile(
+            title: const Text("Calculate Overtime"),
+            subtitle: const Text("Add 1.25x for hours after shift end"),
+            value: manager.enableOvertime,
+            tileColor: bg,
+            onChanged: (val) => widget.onUpdate(enableOt: val),
+          ),
+
+          const SizedBox(height: 20),
           _buildSectionHeader("DISPLAY & PRIVACY"),
-          SwitchListTile(
-            title: const Text("Dark Mode"),
-            value: widget.isDarkMode,
-            tileColor: bg,
-            onChanged: (val) => widget.onUpdate(isDark: val),
-          ),
-          SwitchListTile(
-            title: const Text("24-Hour Format"),
-            value: widget.use24HourFormat,
-            tileColor: bg,
-            onChanged: (val) => widget.onUpdate(is24h: val),
-          ),
-          SwitchListTile(
-            title: const Text("Privacy Mode"),
-            subtitle: const Text("Hide money amounts (****.**)"),
-            secondary: const Icon(CupertinoIcons.eye_slash),
-            value: widget.hideMoney,
-            tileColor: bg,
-            onChanged: (val) => widget.onUpdate(hideMoney: val),
-          ),
+          SwitchListTile(title: const Text("Dark Mode"), value: widget.isDarkMode, tileColor: bg, onChanged: (val) => widget.onUpdate(isDark: val)),
+          SwitchListTile(title: const Text("24-Hour Format"), value: widget.use24HourFormat, tileColor: bg, onChanged: (val) => widget.onUpdate(is24h: val)),
+          SwitchListTile(title: const Text("Privacy Mode"), subtitle: const Text("Hide money amounts (****.**)"), secondary: const Icon(CupertinoIcons.eye_slash), value: widget.hideMoney, tileColor: bg, onChanged: (val) => widget.onUpdate(hideMoney: val)),
           ListTile(
-            tileColor: bg,
-            leading: const Icon(CupertinoIcons.money_dollar),
-            title: const Text("Currency Symbol"),
+            tileColor: bg, leading: const Icon(CupertinoIcons.money_dollar), title: const Text("Currency Symbol"),
             trailing: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
                 value: widget.currencySymbol,
-                items: _currencies.map((String value) {
-                  return DropdownMenuItem<String>(
-                    value: value,
-                    child: Text(value, style: const TextStyle(fontWeight: FontWeight.bold)),
-                  );
-                }).toList(),
-                onChanged: (String? newValue) {
-                  if (newValue != null) widget.onUpdate(currencySymbol: newValue);
-                },
+                items: _currencies.map((String value) => DropdownMenuItem<String>(value: value, child: Text(value, style: const TextStyle(fontWeight: FontWeight.bold)))).toList(),
+                onChanged: (String? newValue) { if (newValue != null) widget.onUpdate(currencySymbol: newValue); },
               ),
             ),
           ),
 
           const SizedBox(height: 20),
           _buildSectionHeader("DATA MANAGEMENT"),
+          ListTile(tileColor: bg, leading: const Icon(Icons.system_update, color: Colors.blue), title: const Text("Check for Updates"), onTap: () { playClickSound(context); GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: true); }),
+          ListTile(tileColor: bg, leading: const Icon(Icons.description, color: Colors.purple), title: const Text("Copy Text Report"), subtitle: const Text("For humans (WhatsApp/Email)", style: TextStyle(fontSize: 10)), onTap: widget.onExportReport),
+          ListTile(tileColor: bg, leading: const Icon(Icons.save, color: Colors.teal), title: const Text("Backup Data (JSON)"), subtitle: const Text("For switching apps (Save this code!)", style: TextStyle(fontSize: 10)), onTap: widget.onBackup),
+          ListTile(tileColor: bg, leading: const Icon(Icons.restore, color: Colors.orange), title: const Text("Restore Backup"), onTap: () { playClickSound(context); _showRestoreDialog(context); }),
           ListTile(
-            tileColor: bg,
-            leading: const Icon(Icons.system_update, color: Colors.blue),
-            title: const Text("Check for Updates"),
-            onTap: () {
-              playClickSound(context);
-              GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: true);
-            },
-          ),
-          ListTile(
-            tileColor: bg,
-            leading: const Icon(Icons.description, color: Colors.purple),
-            title: const Text("Copy Text Report"),
-            subtitle: const Text("For humans (WhatsApp/Email)", style: TextStyle(fontSize: 10)),
-            onTap: widget.onExportReport,
-          ),
-          ListTile(
-            tileColor: bg,
-            leading: const Icon(Icons.save, color: Colors.teal),
-            title: const Text("Backup Data (JSON)"),
-            subtitle: const Text("For switching apps (Save this code!)", style: TextStyle(fontSize: 10)),
-            onTap: widget.onBackup,
-          ),
-          ListTile(
-            tileColor: bg,
-            leading: const Icon(Icons.restore, color: Colors.orange),
-            title: const Text("Restore Backup"),
-            onTap: () {
-              playClickSound(context);
-              _showRestoreDialog(context);
-            },
-          ),
-          ListTile(
-            tileColor: bg,
-            leading: const Icon(Icons.delete_forever, color: Colors.red),
-            title: const Text("Delete All Data", style: TextStyle(color: Colors.red)),
-            onTap: widget.onDeleteAll,
+            tileColor: bg, 
+            leading: const Icon(Icons.delete_forever, color: Colors.red), 
+            title: const Text("Clear Data...", style: TextStyle(color: Colors.red)), 
+            onTap: () => _showDeleteOptions(context)
           ),
         ],
       ),
@@ -217,29 +218,14 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Widget _buildSectionHeader(String title) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-      child: Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary, fontSize: 12)),
-    );
+    return Padding(padding: const EdgeInsets.fromLTRB(16, 0, 16, 8), child: Text(title, style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary, fontSize: 12)));
   }
 
   Widget _buildTimeTile(String title, TimeOfDay current, Function(TimeOfDay) onSelect) {
     return ListTile(
-      tileColor: Theme.of(context).cardColor,
-      title: Text(title),
-      trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(8)),
-        child: Text(
-          formatTime(context, current, widget.use24HourFormat),
-          style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
-        ),
-      ),
-      onTap: () async {
-        playClickSound(context);
-        final t = await showFastTimePicker(context, current, widget.use24HourFormat);
-        if (t != null) onSelect(t);
-      },
+      tileColor: Theme.of(context).cardColor, title: Text(title),
+      trailing: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Text(formatTime(context, current, widget.use24HourFormat), style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary))),
+      onTap: () async { playClickSound(context); final t = await showFastTimePicker(context, current, widget.use24HourFormat); if (t != null) onSelect(t); },
     );
   }
 }
