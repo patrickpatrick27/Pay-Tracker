@@ -28,7 +28,6 @@ git push origin HEAD
 
 # 5. Tag and Push Tag
 echo "🏷  Tagging version $TAG..."
-# Check if tag exists remotely to avoid crash
 if git ls-remote --exit-code --tags origin "$TAG" >/dev/null 2>&1; then
     echo "⚠️  Tag $TAG already exists on GitHub. Skipping tag push..."
 else
@@ -37,8 +36,9 @@ else
 fi
 
 # 6. Build APK
-echo "🛠  Building Release APK... (Relax, this takes a minute)"
-flutter build apk --release
+echo "🛠  Building Release APK..."
+# Added --no-tree-shake-icons to ensure all icons appear correctly in the APK
+flutter build apk --release --no-tree-shake-icons
 
 # 7. Check if Build Succeeded
 APK_PATH="build/app/outputs/flutter-apk/app-release.apk"
@@ -48,7 +48,8 @@ if [ ! -f "$APK_PATH" ]; then
 fi
 
 # 8. Rename and Upload
-NEW_NAME="NEW_NAME="build/app/outputs/flutter-apk/Pay_Tracker_$TAG.apk"
+# UPDATED: Changed Kaong_Monitor to Pay_Tracker
+NEW_NAME="build/app/outputs/flutter-apk/Pay_Tracker_$TAG.apk"
 mv "$APK_PATH" "$NEW_NAME"
 
 echo "📦 Uploading Release to GitHub..."
