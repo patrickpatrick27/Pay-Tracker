@@ -19,7 +19,6 @@ class Shift {
     this.manualAmount = 0.0,
   });
 
-  // Duplicate Check Helper
   @override
   bool operator ==(Object other) =>
       other is Shift &&
@@ -52,7 +51,6 @@ class Shift {
     );
   }
 
-  // --- SHORTCUTS TO CALCULATOR ---
   double getRegularHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
     return PayrollCalculator.calculateRegularHours(rawTimeIn, rawTimeOut, globalStart, globalEnd);
   }
@@ -68,7 +66,7 @@ class PayPeriod {
   DateTime start;
   DateTime end;
   DateTime lastEdited; 
-  double hourlyRate;
+  double hourlyRate; // This is now a legacy field, usually ignored in favor of global
   List<Shift> shifts;
 
   PayPeriod({
@@ -97,9 +95,12 @@ class PayPeriod {
     );
   }
 
-  // --- CONVENIENCE METHODS ---
-
-  double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool enableLate = true, bool enableOt = true}) {
+  // UPDATED: Now requires hourlyRate to be passed in from Global Settings
+  double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {
+    required double hourlyRate, 
+    bool enableLate = true, 
+    bool enableOt = true
+  }) {
     double total = 0;
     for (var shift in shifts) {
       if (shift.isManualPay) {
@@ -131,7 +132,6 @@ class PayPeriod {
     return shifts.fold(0, (sum, s) => sum + s.getOvertimeHours(shiftStart, shiftEnd));
   }
 
-  // UPDATED: Consistent Date Format
   void updateName() {
     final dateFormat = DateFormat('MMM d, yyyy');
     name = "${dateFormat.format(start)} - ${dateFormat.format(end)}";

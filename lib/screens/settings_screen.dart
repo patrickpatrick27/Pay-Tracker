@@ -17,7 +17,7 @@ class SettingsScreen extends StatefulWidget {
   final Function({
     bool? isDark, bool? is24h, bool? hideMoney, 
     String? currencySymbol, TimeOfDay? shiftStart, TimeOfDay? shiftEnd,
-    bool? enableLate, bool? enableOt
+    bool? enableLate, bool? enableOt, double? defaultRate // ADDED defaultRate
   }) onUpdate;
 
   final VoidCallback onDeleteAll; 
@@ -47,6 +47,7 @@ class SettingsScreen extends StatefulWidget {
 class _SettingsScreenState extends State<SettingsScreen> {
   late TimeOfDay _localShiftStart;
   late TimeOfDay _localShiftEnd;
+  late TextEditingController _rateController; // Controller for Base Pay
   final List<String> _currencies = ['₱', '\$', '€', '£', '¥', '₩', '₹', 'Rp'];
   bool _updateAvailable = false; 
 
@@ -55,11 +56,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.initState();
     _localShiftStart = widget.shiftStart;
     _localShiftEnd = widget.shiftEnd;
+    
+    // Initialize controller with current global rate from DataManager
+    final manager = Provider.of<DataManager>(context, listen: false);
+    _rateController = TextEditingController(text: manager.defaultHourlyRate.toStringAsFixed(0));
+    
     _checkForUpdates();
   }
 
+  @override
+  void dispose() {
+    _rateController.dispose();
+    super.dispose();
+  }
+
   Future<void> _checkForUpdates() async {
-    // Silent check to show the badge
     bool available = await GithubUpdateService.isUpdateAvailable();
     if (mounted) {
       setState(() {
@@ -90,7 +101,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
       onConfirm: () async {
         final manager = Provider.of<DataManager>(context, listen: false);
         await manager.clearLocalData();
-        widget.onDeleteAll(); // Trigger reload in dashboard
+        widget.onDeleteAll(); 
         if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Device data cleared.")));
       }
     );
@@ -104,7 +115,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       isDestructive: true,
       onConfirm: () async {
         final manager = Provider.of<DataManager>(context, listen: false);
-        // Show loading snackbar
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Deleting from Drive..."), duration: Duration(seconds: 1)));
         
         bool success = await manager.deleteCloudData();
@@ -112,10 +122,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
         if (mounted) {
           ScaffoldMessenger.of(context).hideCurrentSnackBar();
           if (success) {
-            // Also log out after wiping cloud to reset state
             await manager.logout();
             widget.onDeleteAll();
-            Navigator.pop(context); // Close settings to return to login
+            Navigator.pop(context); 
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Cloud backup deleted."), backgroundColor: Colors.red));
           } else {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Failed to delete cloud data. Check internet.")));
@@ -173,6 +182,28 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 20),
           _buildSectionHeader("CALCULATIONS"),
+          // --- GLOBAL BASE PAY INPUT ---
+          ListTile(
+            tileColor: bg,
+            leading: const Icon(CupertinoIcons.money_dollar_circle),
+            title: const Text("Base Pay (Hourly)"),
+            trailing: SizedBox(
+              width: 80,
+              child: TextField(
+                controller: _rateController,
+                keyboardType: TextInputType.number,
+                textAlign: TextAlign.right,
+                style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary),
+                decoration: const InputDecoration(border: InputBorder.none, hintText: "0"),
+                onChanged: (val) {
+                  double? rate = double.tryParse(val);
+                  if (rate != null) {
+                    widget.onUpdate(defaultRate: rate);
+                  }
+                },
+              ),
+            ),
+          ),
           SwitchListTile(
             title: const Text("Deduct Late Minutes"),
             subtitle: const Text("Subtract pay for late arrivals"),
@@ -210,7 +241,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
             tileColor: bg, 
             leading: const Icon(Icons.system_update, color: Colors.blue), 
             title: const Text("Check for Updates"), 
-            // INDICATOR LOGIC
             trailing: _updateAvailable 
                 ? Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), 
@@ -230,7 +260,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const SizedBox(height: 20),
           _buildSectionHeader("DANGER ZONE"),
           
-          // SEPARATE UI FOR DELETE OPTIONS
           ListTile(
             tileColor: bg, 
             leading: const Icon(Icons.delete_outline, color: Colors.red), 

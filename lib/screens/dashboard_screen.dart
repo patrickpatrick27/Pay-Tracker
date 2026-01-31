@@ -26,7 +26,10 @@ class PayPeriodListScreen extends StatefulWidget {
     bool? hideMoney,
     String? currencySymbol,
     TimeOfDay? shiftStart, 
-    TimeOfDay? shiftEnd
+    TimeOfDay? shiftEnd,
+    bool? enableLate,
+    bool? enableOt,
+    double? defaultRate,
   }) onUpdateSettings;
 
   const PayPeriodListScreen({
@@ -293,7 +296,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       currencySymbol: _currencySymbol,
       shiftStart: widget.shiftStart,
       shiftEnd: widget.shiftEnd,
-      onUpdate: ({isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd, enableLate, enableOt}) async {
+      onUpdate: ({isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd, enableLate, enableOt, defaultRate}) async {
         final prefs = await SharedPreferences.getInstance();
         if (hideMoney != null) {
           setState(() => _hideMoney = hideMoney);
@@ -303,13 +306,18 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
           setState(() => _currencySymbol = currencySymbol);
           prefs.setString('setting_currency_symbol', currencySymbol);
         }
-        Provider.of<DataManager>(context, listen: false).updateSettings(isDark: isDark, is24h: is24h, shiftStart: shiftStart, shiftEnd: shiftEnd, enableLate: enableLate, enableOt: enableOt);
+        Provider.of<DataManager>(context, listen: false).updateSettings(
+            isDark: isDark, 
+            is24h: is24h, 
+            shiftStart: shiftStart, 
+            shiftEnd: shiftEnd, 
+            enableLate: enableLate, 
+            enableOt: enableOt,
+            defaultRate: defaultRate,
+        );
       },
       onDeleteAll: () async {
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.remove(kStorageKey); await prefs.remove('pay_tracker_data'); await prefs.remove('is_unsynced');
           setState(() { periods = []; });
-          if (mounted) Provider.of<DataManager>(context, listen: false).syncPayrollToCloud([]);
       },
       onExportReport: () {}, onBackup: () {}, onRestore: (s) {},
     )));
@@ -383,16 +391,14 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       builder: (context, dataManager, child) {
         return Scaffold(
           appBar: AppBar(
-            title: const Text("Payroll Tracker", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5)),
+            title: const Text("Pay Tracker", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5)),
             centerTitle: false, elevation: 0,
             actions: [
-              // 1. SYNC
               Stack(
                 alignment: Alignment.topRight,
                 children: [
                   IconButton(
                     icon: Icon(CupertinoIcons.cloud_upload, color: Theme.of(context).iconTheme.color), 
-                    // FIXED: Closure prevents type mismatch error
                     onPressed: (!dataManager.isGuest) 
                       ? () => _performManualSync() 
                       : () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login required to sync."))); },
@@ -401,22 +407,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     Positioned(right: 8, top: 8, child: Container(width: 10, height: 10, decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2)))),
                 ],
               ),
-              
-              // 2. SORT
-              PopupMenuButton<String>(
-                icon: const Icon(CupertinoIcons.sort_down),
-                onSelected: _sortPeriods,
-                itemBuilder: (BuildContext context) => <PopupMenuEntry<String>>[
-                  const PopupMenuItem<String>(value: 'newest', child: Text('Newest First')),
-                  const PopupMenuItem<String>(value: 'oldest', child: Text('Oldest First')),
-                  const PopupMenuItem<String>(value: 'edited', child: Text('Recently Edited')),
-                ],
-              ),
-
-              // 3. SETTINGS
+              IconButton(icon: const Icon(CupertinoIcons.sort_down), onPressed: () => _sortPeriods('newest')), 
               IconButton(icon: const Icon(CupertinoIcons.settings), onPressed: _openSettings),
-
-              // 4. PROFILE
               PopupMenuButton<String>(
                 offset: const Offset(0, 45),
                 icon: CircleAvatar(
@@ -464,7 +456,9 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                   itemBuilder: (context, index) {
                     final p = periods[index];
                     final totalPay = p.getTotalPay(
-                      widget.shiftStart, widget.shiftEnd, 
+                      widget.shiftStart, 
+                      widget.shiftEnd, 
+                      hourlyRate: dataManager.defaultHourlyRate, // USE GLOBAL RATE
                       enableLate: dataManager.enableLateDeductions, 
                       enableOt: dataManager.enableOvertime
                     );

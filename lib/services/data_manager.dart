@@ -18,8 +18,9 @@ class DataManager extends ChangeNotifier {
   // Settings
   bool _isDarkMode = false;
   bool _use24HourFormat = false;
-  bool _enableLateDeductions = true; // NEW
-  bool _enableOvertime = true;       // NEW
+  bool _enableLateDeductions = true;
+  bool _enableOvertime = true;
+  double _defaultHourlyRate = 50.0; // NEW: Global Source of Truth
   TimeOfDay _shiftStart = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _shiftEnd = const TimeOfDay(hour: 17, minute: 0);
 
@@ -34,6 +35,7 @@ class DataManager extends ChangeNotifier {
   bool get use24HourFormat => _use24HourFormat;
   bool get enableLateDeductions => _enableLateDeductions;
   bool get enableOvertime => _enableOvertime;
+  double get defaultHourlyRate => _defaultHourlyRate; // NEW
   TimeOfDay get shiftStart => _shiftStart;
   TimeOfDay get shiftEnd => _shiftEnd;
 
@@ -46,6 +48,7 @@ class DataManager extends ChangeNotifier {
     _isGuestMode = prefs.getBool('is_guest_mode') ?? false;
     _enableLateDeductions = prefs.getBool('enable_late') ?? true;
     _enableOvertime = prefs.getBool('enable_ot') ?? true;
+    _defaultHourlyRate = prefs.getDouble('default_hourly_rate') ?? 50.0; // NEW
     
     int startH = prefs.getInt('${kSettingShiftStart}_h') ?? 8;
     int startM = prefs.getInt('${kSettingShiftStart}_m') ?? 0;
@@ -55,7 +58,6 @@ class DataManager extends ChangeNotifier {
     int endM = prefs.getInt('${kSettingShiftEnd}_m') ?? 0;
     _shiftEnd = TimeOfDay(hour: endH, minute: endM);
 
-    // Try Silent Login (if not guest)
     if (!_isGuestMode) {
       try {
         _currentUser = await _googleSignIn.signInSilently();
@@ -76,7 +78,6 @@ class DataManager extends ChangeNotifier {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('is_guest_mode', false);
 
-        // Auto-Fetch Cloud Data on Login
         String? cloudJson = await fetchCloudDataOnly();
         if (cloudJson != null && cloudJson.isNotEmpty) {
            await prefs.setString('pay_tracker_data', cloudJson);
@@ -142,6 +143,7 @@ class DataManager extends ChangeNotifier {
 
   void updateSettings({
     bool? isDark, bool? is24h, bool? enableLate, bool? enableOt,
+    double? defaultRate, // NEW
     TimeOfDay? shiftStart, TimeOfDay? shiftEnd
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -149,6 +151,7 @@ class DataManager extends ChangeNotifier {
     if (is24h != null) { _use24HourFormat = is24h; prefs.setBool(kSetting24h, is24h); }
     if (enableLate != null) { _enableLateDeductions = enableLate; prefs.setBool('enable_late', enableLate); }
     if (enableOt != null) { _enableOvertime = enableOt; prefs.setBool('enable_ot', enableOt); }
+    if (defaultRate != null) { _defaultHourlyRate = defaultRate; prefs.setDouble('default_hourly_rate', defaultRate); } // NEW
     
     if (shiftStart != null) { 
       _shiftStart = shiftStart; 

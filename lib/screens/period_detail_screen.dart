@@ -1,11 +1,13 @@
 import 'package:flutter/cupertino.dart'; 
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
 import '../utils/helpers.dart';
 import '../utils/calculations.dart';
 import '../widgets/custom_pickers.dart';
+import '../services/data_manager.dart'; // Import to access global rate
 
 class PeriodDetailScreen extends StatefulWidget {
   final PayPeriod period;
@@ -15,8 +17,8 @@ class PeriodDetailScreen extends StatefulWidget {
   final bool hideMoney; 
   final String currencySymbol;
   final VoidCallback onSave;
-  final bool enableLate; // NEW
-  final bool enableOt;   // NEW
+  final bool enableLate; 
+  final bool enableOt;   
   
   const PeriodDetailScreen({
     super.key, 
@@ -36,14 +38,7 @@ class PeriodDetailScreen extends StatefulWidget {
 }
 
 class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
-  late TextEditingController _rateController;
   final NumberFormat currencyFormatter = NumberFormat("#,##0.00", "en_US");
-
-  @override
-  void initState() {
-    super.initState();
-    _rateController = TextEditingController(text: widget.period.hourlyRate.toString());
-  }
 
   String _getMoneyText(double amount) {
     if (widget.hideMoney) return "****.**";
@@ -130,33 +125,23 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
     });
   }
 
-  void _confirmDeleteShift(int index) {
-    showConfirmationDialog(
-      context: context, 
-      title: "Delete Shift?", 
-      content: "Remove this work day?", 
-      isDestructive: true, 
-      onConfirm: () {
-        playClickSound(context);
-        setState(() { 
-          widget.period.shifts.removeAt(index); 
-          _saveChanges(); // Direct delete, confirmation happened above
-        });
-      }
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
+    // 1. Get the Global Hourly Rate from Provider
+    final dataManager = Provider.of<DataManager>(context);
+    final double hourlyRate = dataManager.defaultHourlyRate;
+
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
     
-    // CALCULATION LOGIC USING TOGGLES
+    // 2. Pass the Global Rate into calculation
     final double totalPay = widget.period.getTotalPay(
       widget.shiftStart, widget.shiftEnd, 
+      hourlyRate: hourlyRate, // FIXED: Now passing required rate
       enableLate: widget.enableLate, 
       enableOt: widget.enableOt
     );
+
     final double totalReg = widget.period.getTotalRegularHours(widget.shiftStart, widget.shiftEnd);
     final double totalOT = widget.enableOt ? widget.period.getTotalOvertimeHours(widget.shiftStart, widget.shiftEnd) : 0.0;
 
@@ -186,11 +171,15 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                     ]
                 ]),
                 const SizedBox(height: 12),
-                Container(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8), decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(20)), child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Text("Rate: ", style: TextStyle(color: subTextColor, fontSize: 12)),
-                      SizedBox(width: 60, child: TextField(controller: _rateController, keyboardType: TextInputType.number, textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Theme.of(context).textTheme.bodyLarge?.color), decoration: const InputDecoration(border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero), onChanged: (val) { setState(() { widget.period.hourlyRate = double.tryParse(val) ?? 50; _saveChanges(); }); })),
-                      Text("/hr", style: TextStyle(color: subTextColor, fontSize: 12)),
-                ])),
+                // 3. Removed Rate Editor - Now displaying the Global Rate from Settings
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(20)),
+                  child: Text(
+                    "Global Rate: ${widget.currencySymbol}${hourlyRate.toStringAsFixed(0)}/hr",
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: subTextColor),
+                  ),
+                ),
               ],
             ),
           ),
@@ -209,13 +198,11 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                       key: Key(s.id),
                       direction: DismissDirection.endToStart,
                       background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)), child: const Icon(CupertinoIcons.delete, color: Colors.white)),
-                      // CONFIRM DISMISS LOGIC (Only one dialog)
                       confirmDismiss: (d) async { 
                         bool confirm = false; 
                         await showConfirmationDialog(context: context, title: "Delete Shift?", content: "Remove this work day?", isDestructive: true, onConfirm: () => confirm = true); 
                         return confirm; 
                       },
-                      // ACTION ON DISMISS (No dialog here)
                       onDismissed: (d) {
                         playClickSound(context);
                         setState(() { widget.period.shifts.removeAt(i); _saveChanges(); });
@@ -237,7 +224,9 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                                       const SizedBox(height: 4),
                                       Row(children: [
                                           _buildTag("Reg: ${s.getRegularHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", Colors.grey, isDark),
-                                          if (widget.enableOt && s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) > 0) _buildTag("OT: ${s.getOvertimeHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", Colors.blue, isDark),
+                                          // 4. FIXED: Passing mandatory shiftEnd
+                                          if (widget.enableOt && s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) > 0) 
+                                            _buildTag("OT: ${s.getOvertimeHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", Colors.blue, isDark),
                                           if (widget.enableLate && lateHours > 0) _buildTag("Late: ${lateHours.toStringAsFixed(1)}h", Colors.redAccent, isDark),
                                       ]),
                                     ]

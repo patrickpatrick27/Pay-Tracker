@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart'; // Required for kDebugMode
 import 'package:provider/provider.dart';
 import 'services/data_manager.dart';
 import 'services/update_service.dart';
@@ -29,7 +30,7 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
   @override
   void initState() {
     super.initState();
-    // Auto-update check
+    // Auto-update check on launch
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) GithubUpdateService.checkForUpdate(context);
     });
@@ -40,7 +41,7 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
     // Watch DataManager for Auth & Settings
     final dataManager = Provider.of<DataManager>(context);
 
-    // 1. Loading Screen (while checking Google Auth)
+    // 1. Loading Screen (while initializing local data & auth)
     if (!dataManager.isInitialized) {
       return const MaterialApp(
         debugShowCheckedModeBanner: false,
@@ -53,7 +54,8 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
     // 2. Main App Logic
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Pay Tracker Pro',
+      // Logic: Use "Dev" name if running in Debug mode from VS Code
+      title: kDebugMode ? 'Pay Tracker (Dev)' : 'Pay Tracker',
       
       // Dynamic Theme based on DataManager
       themeMode: dataManager.isDarkMode ? ThemeMode.dark : ThemeMode.light,
@@ -98,23 +100,33 @@ class _PayTrackerAppState extends State<PayTrackerApp> {
       // 3. Routing Logic: Login vs Dashboard
       home: dataManager.isAuthenticated 
         ? PayPeriodListScreen(
-            // Pass values from Provider to Dashboard
             use24HourFormat: dataManager.use24HourFormat,
             isDarkMode: dataManager.isDarkMode,
             shiftStart: dataManager.shiftStart,
             shiftEnd: dataManager.shiftEnd,
             
-            // Pass the update callback (Updated Signature)
-            onUpdateSettings: ({isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd}) {
-              // We pass global settings to DataManager
+            // FIXED: Added missing arguments to match the updated dashboard signature
+            onUpdateSettings: ({
+              isDark, 
+              is24h, 
+              hideMoney, 
+              currencySymbol, 
+              shiftStart, 
+              shiftEnd, 
+              enableLate, 
+              enableOt, 
+              defaultRate
+            }) {
+              // Pass all relevant settings back to DataManager for global persistence
               dataManager.updateSettings(
                 isDark: isDark,
                 is24h: is24h,
+                enableLate: enableLate,
+                enableOt: enableOt,
+                defaultRate: defaultRate, // Global Base Pay
                 shiftStart: shiftStart,
                 shiftEnd: shiftEnd,
               );
-              // Note: 'hideMoney' and 'currencySymbol' are saved locally in the Dashboard/Settings 
-              // screens using SharedPreferences, so we don't need to pass them to DataManager here.
             },
           )
         : const LoginScreen(),
