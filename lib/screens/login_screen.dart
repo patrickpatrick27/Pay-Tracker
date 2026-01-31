@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/data_manager.dart';
-import '../services/update_service.dart'; // Ensure this is imported
+import '../services/update_service.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -18,6 +18,7 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     // Prompt for update on launch/login screen
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      // The service now uses navigatorKey, so this is bulletproof
       if (mounted) GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: false);
     });
   }
@@ -61,10 +62,10 @@ class _LoginScreenState extends State<LoginScreen> {
               const Spacer(),
               const Icon(Icons.account_balance_wallet_rounded, size: 80, color: Color(0xFF3F51B5)),
               const SizedBox(height: 20),
-              Text(
-                "Payroll Tracker", // Updated Name
+              const Text(
+                "Pay Tracker", // Consistent name with Dashboard
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: textColor),
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
               const SizedBox(height: 10),
               Text(
@@ -82,10 +83,10 @@ class _LoginScreenState extends State<LoginScreen> {
                   label: const Text("Continue with Google"),
                   style: ElevatedButton.styleFrom(
                     backgroundColor: isDark ? Colors.grey[800] : Colors.white,
-                    foregroundColor: isDark ? Colors.white : Colors.black,
+                    foregroundColor: textColor,
                     elevation: 2,
                     padding: const EdgeInsets.symmetric(vertical: 12),
-                    side: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey),
+                    side: BorderSide(color: isDark ? Colors.grey[700]! : Colors.grey[300]!),
                   ),
                 ),
                 const SizedBox(height: 15),
