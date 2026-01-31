@@ -13,7 +13,7 @@ class GithubUpdateService {
   static const String _repo = "payout_app";
   // ----------------------------------------
 
-  // --- NEW: Silent Check for Badge Indicator ---
+  // --- Silent Check for Badge Indicator ---
   static Future<bool> isUpdateAvailable() async {
     try {
       PackageInfo packageInfo = await PackageInfo.fromPlatform();
@@ -25,9 +25,9 @@ class GithubUpdateService {
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        String latestVersion = data['tag_name'].toString().replaceAll('v', '');
+        String latestVersion = (data['tag_name'] ?? "").toString().replaceAll('v', '');
         
-        // Return true if latest is newer than current
+        if (latestVersion.isEmpty) return false;
         return _isNewer(latestVersion, currentVersion);
       }
     } catch (e) {
@@ -36,7 +36,7 @@ class GithubUpdateService {
     return false;
   }
 
-  // --- EXISTING: Check with Dialog UI ---
+  // --- Check with Dialog UI ---
   static Future<void> checkForUpdate(BuildContext context, {bool showNoUpdateMsg = false}) async {
     print("🔍 [UpdateService] Checking for updates...");
     
@@ -52,7 +52,7 @@ class GithubUpdateService {
       
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        String tagName = data['tag_name']; 
+        String tagName = data['tag_name'] ?? ""; 
         String latestVersion = tagName.replaceAll('v', '');
         print("☁️ GitHub Version: $latestVersion");
 
@@ -67,21 +67,32 @@ class GithubUpdateService {
         }
 
         String? apkUrl;
-        List<dynamic> assets = data['assets'];
+        // FIX: Null-safe access to assets
+        List<dynamic>? assets = data['assets'];
         
-        for (var asset in assets) {
-          if (asset['name'].toString().endsWith('.apk')) {
-            apkUrl = asset['browser_download_url']; 
-            break;
+        if (assets != null) {
+          for (var asset in assets) {
+            if (asset['name'].toString().endsWith('.apk')) {
+              apkUrl = asset['browser_download_url']; 
+              break;
+            }
           }
         }
 
-        if (apkUrl == null) return;
+        if (apkUrl == null) {
+          print("⚠️ No APK found in GitHub release assets.");
+          return;
+        }
 
         bool isNewer = _isNewer(latestVersion, currentVersion);
 
         if (isNewer) {
-          if (context.mounted) _showUpdateDialog(context, latestVersion, apkUrl);
+          if (context.mounted) {
+            // FIX: Use delayed zero to prevent Null Check error during auto-check on startup
+            Future.delayed(Duration.zero, () {
+              if (context.mounted) _showUpdateDialog(context, latestVersion, apkUrl!);
+            });
+          }
         } else if (showNoUpdateMsg && context.mounted) {
            ScaffoldMessenger.of(context).showSnackBar(
               const SnackBar(content: Text("You are on the latest version!"), backgroundColor: Colors.green)
@@ -100,8 +111,8 @@ class GithubUpdateService {
 
   static bool _isNewer(String latest, String current) {
     try {
-      List<int> l = latest.split('.').map(int.parse).toList();
-      List<int> c = current.split('.').map(int.parse).toList();
+      List<int> l = latest.split('.').map((e) => int.tryParse(e) ?? 0).toList();
+      List<int> c = current.split('.').map((e) => int.tryParse(e) ?? 0).toList();
 
       for (int i = 0; i < l.length; i++) {
         if (i >= c.length) return true;
@@ -174,10 +185,12 @@ class _UpdateProgressDialogState extends State<_UpdateProgressDialog> {
 
     } catch (e) {
       print("Install Error: $e");
-      setState(() {
-        _status = "Error: $e";
-        _isDownloading = false;
-      });
+      if (mounted) {
+        setState(() {
+          _status = "Error: $e";
+          _isDownloading = false;
+        });
+      }
     }
   }
 
