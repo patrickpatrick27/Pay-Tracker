@@ -2,10 +2,11 @@ import 'package:flutter/material.dart';
 
 class PayrollCalculator {
   
-  // --- CORE TIME MATH ---
+  // --- CORE UTILS ---
 
   static double timeToDouble(TimeOfDay t) => t.hour + t.minute / 60.0;
 
+  // Standard 30-minute block rounding
   static TimeOfDay roundTime(TimeOfDay time, {required bool isStart}) {
     int totalMinutes = time.hour * 60 + time.minute;
     int remainder = totalMinutes % 30;
@@ -26,56 +27,80 @@ class PayrollCalculator {
     return TimeOfDay(hour: h, minute: m);
   }
 
-  // --- PHILIPPINE LABOR CODE: LATE DEDUCTIONS ---
+  // --- LATE CALCULATOR ---
   
   static int calculateLateMinutes(TimeOfDay actualIn, TimeOfDay shiftStart) {
-    int startMins = shiftStart.hour * 60 + shiftStart.minute;
-    int inMins = actualIn.hour * 60 + actualIn.minute;
-    
-    // Only deduct if they arrived AFTER the start time
-    if (inMins > startMins) {
+    double actualVal = timeToDouble(actualIn);
+    double startVal = timeToDouble(shiftStart);
+
+    // Only count as late if they arrive STRICTLY after shift start
+    if (actualVal > startVal) {
+      int startMins = shiftStart.hour * 60 + shiftStart.minute;
+      int inMins = actualIn.hour * 60 + actualIn.minute;
       return inMins - startMins;
     }
     return 0;
   }
 
-  // --- HOURS CALCULATION (Pure logic, no Shift object dependency) ---
+  // --- HOURS CALCULATOR ---
 
-  static double calculateRegularHours(TimeOfDay rawIn, TimeOfDay rawOut, TimeOfDay shiftStart, TimeOfDay shiftEnd) {
-    // 1. Get Rounded Times
-    TimeOfDay paidIn = roundTime(rawIn, isStart: true);
-    TimeOfDay paidOut = roundTime(rawOut, isStart: false);
+  static double calculateRegularHours({
+    required TimeOfDay rawIn, 
+    required TimeOfDay rawOut, 
+    required TimeOfDay shiftStart, 
+    required TimeOfDay shiftEnd,
+    required bool isLateEnabled,
+    bool roundEndTime = true, // NEW: Controls strict pay vs. display duration
+  }) {
+    // 1. DETERMINE EFFECTIVE START TIME
+    TimeOfDay effectiveIn;
+    
+    if (isLateEnabled) {
+      // Logic A: "Base - Penalty"
+      // Assume Shift Start (8:00) to allow full hours, specific penalty subtracted later.
+      effectiveIn = shiftStart; 
+      
+      // If early (7:50), still clamp to 8:00.
+      if (timeToDouble(rawIn) < timeToDouble(shiftStart)) {
+        effectiveIn = shiftStart; 
+      }
+    } else {
+      // Logic B: "Rounding"
+      effectiveIn = roundTime(rawIn, isStart: true);
+      if (timeToDouble(effectiveIn) < timeToDouble(shiftStart)) {
+        effectiveIn = shiftStart;
+      }
+    }
 
-    // 2. Ensure Paid Time In isn't earlier than Global Shift Start
-    double rVal = timeToDouble(paidIn);
-    double sVal = timeToDouble(shiftStart);
-    if (rVal < sVal) paidIn = shiftStart;
+    // 2. DETERMINE EFFECTIVE END TIME
+    // If roundEndTime is TRUE (for Pay), we round 8:59 -> 8:30.
+    // If roundEndTime is FALSE (for Display), we use 8:59.
+    TimeOfDay effectiveOut = roundEndTime ? roundTime(rawOut, isStart: false) : rawOut;
 
-    // 3. Calculate Duration
-    double start = timeToDouble(paidIn);
-    double end = timeToDouble(paidOut);
+    // 3. CALCULATE DURATION
+    double start = timeToDouble(effectiveIn);
+    double end = timeToDouble(effectiveOut);
     double limit = timeToDouble(shiftEnd);
 
-    // Cap at shift end (Regular hours stop at shift end)
+    // Cap at shift end
     double actualEnd = (end > limit) ? limit : end;
     
-    // Handle overnight shifts (crossing midnight)
+    // Handle overnight shifts
     if (actualEnd < start) actualEnd += 24;
 
     double duration = actualEnd - start;
 
-    // 4. Deduct Lunch Break (Auto-deduct 1 hour if working through 12-1 PM)
+    // 4. LUNCH BREAK (Standard 1 Hour deduction)
     if (start <= 12.0 && actualEnd >= 13.0) duration -= 1.0;
 
     return duration > 0 ? duration : 0;
   }
 
-  static double calculateOvertimeHours(TimeOfDay rawIn, TimeOfDay rawOut, TimeOfDay shiftEnd) {
+  static double calculateOvertimeHours(TimeOfDay rawOut, TimeOfDay shiftEnd) {
     TimeOfDay paidOut = roundTime(rawOut, isStart: false);
     double end = timeToDouble(paidOut);
     double limit = timeToDouble(shiftEnd);
-
-    // Handle overnight logic for OT if needed, but standard logic:
+    
     if (end > limit) {
       return end - limit;
     }

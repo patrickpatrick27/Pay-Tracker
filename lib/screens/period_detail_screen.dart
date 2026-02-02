@@ -4,10 +4,11 @@ import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
 import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
-import '../utils/helpers.dart';
+import '../utils/helpers.dart'; 
 import '../utils/calculations.dart';
 import '../widgets/custom_pickers.dart';
-import '../services/data_manager.dart'; // Import to access global rate
+import '../services/data_manager.dart'; 
+import '../services/audio_service.dart';
 
 class PeriodDetailScreen extends StatefulWidget {
   final PayPeriod period;
@@ -40,9 +41,39 @@ class PeriodDetailScreen extends StatefulWidget {
 class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
   final NumberFormat currencyFormatter = NumberFormat("#,##0.00", "en_US");
 
+  // --- HELPER: Consistent Red Error Snackbar ---
+  void _showErrorSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).hideCurrentSnackBar();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.error_outline, color: Colors.white),
+            const SizedBox(width: 10),
+            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold))),
+          ],
+        ),
+        backgroundColor: Colors.red,
+        behavior: SnackBarBehavior.floating, // Floats above bottom
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 3),
+      )
+    );
+  }
+
   String _getMoneyText(double amount) {
     if (widget.hideMoney) return "****.**";
     return "${widget.currencySymbol}${currencyFormatter.format(amount)}";
+  }
+
+  String _formatDuration(double hours) {
+    if (hours < 1.0 && hours > 0) {
+      int minutes = (hours * 60).round();
+      return "${minutes}m";
+    }
+    return "${hours.toStringAsFixed(1)}h";
   }
 
   void _saveChanges() {
@@ -51,7 +82,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
   }
 
   void _showShiftDialog({Shift? existingShift}) async {
-    playClickSound(context);
+    AudioService().playClick();
     DateTime tempDate = existingShift?.date ?? widget.period.start;
     if (existingShift == null) {
       DateTime now = DateTime.now();
@@ -64,7 +95,8 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color dlgBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
 
-    await showModalBottomSheet(
+    // We accept a dynamic result to handle different exit reasons
+    var result = await showModalBottomSheet(
       context: context, isScrollControlled: true, backgroundColor: dlgBg,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
       builder: (ctx) {
@@ -85,7 +117,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                     child: Container(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16), decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(CupertinoIcons.calendar, color: Colors.blue), const SizedBox(width: 12), Text(DateFormat('MMM d, yyyy').format(tempDate), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))])),
                   ),
                   const SizedBox(height: 16),
-                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Manual Pay Override", style: TextStyle(fontWeight: FontWeight.w500)), CupertinoSwitch(value: isManual, activeColor: Colors.blue, onChanged: (val) { playClickSound(context); setModalState(() => isManual = val); })]),
+                  Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Manual Pay Override", style: TextStyle(fontWeight: FontWeight.w500)), CupertinoSwitch(value: isManual, activeColor: Colors.blue, onChanged: (val) { AudioService().playClick(); setModalState(() => isManual = val); })]),
                   const Divider(height: 24),
                   if (!isManual) ...[
                      Row(children: [
@@ -97,7 +129,28 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                      TextField(controller: manualCtrl, keyboardType: TextInputType.number, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18), decoration: InputDecoration(labelText: "Amount", border: const OutlineInputBorder(), prefixText: "${widget.currencySymbol} "))
                   ],
                   const SizedBox(height: 30),
-                  SizedBox(width: double.infinity, height: 50, child: ElevatedButton(style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), onPressed: () { playClickSound(context); Navigator.pop(context, true); }, child: const Text("Save Shift", style: TextStyle(fontWeight: FontWeight.bold)))),
+                  SizedBox(width: double.infinity, height: 50, child: ElevatedButton(
+                    style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
+                    onPressed: () { 
+                      AudioService().playClick(); 
+                      
+                      // 1. Validate Time Logic
+                      if (!isManual) {
+                        double inVal = tIn.hour + tIn.minute / 60.0;
+                        double outVal = tOut.hour + tOut.minute / 60.0;
+
+                        if (inVal >= outVal) {
+                          // Close sheet immediately with special error code
+                          Navigator.pop(context, "INVALID_TIME");
+                          return; 
+                        }
+                      }
+                      
+                      // Success signal
+                      Navigator.pop(context, true); 
+                    }, 
+                    child: const Text("Save Shift", style: TextStyle(fontWeight: FontWeight.bold))
+                  )),
                   const SizedBox(height: 20),
                 ],
               ),
@@ -105,39 +158,43 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
           },
         );
       }
-    ).then((saved) {
-      if (saved == true) {
-        if (existingShift == null && isDuplicateShift(widget.period.shifts, tempDate)) {
-           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Error: Date already exists!"), backgroundColor: Colors.red));
+    );
+
+    // --- HANDLE RESULT ---
+    
+    if (result == "INVALID_TIME") {
+      // 2. Show Consistent Red Snackbar
+      _showErrorSnackBar("Time In must be earlier than Time Out.");
+    } 
+    else if (result == true) {
+      // 3. Proceed to Save
+      if (existingShift == null && isDuplicateShift(widget.period.shifts, tempDate)) {
+           _showErrorSnackBar("Error: Date already exists!");
            return;
-        }
-        setState(() {
-          if (existingShift != null) {
-            existingShift.date = tempDate; existingShift.rawTimeIn = tIn; existingShift.rawTimeOut = tOut;
-            existingShift.isManualPay = isManual; existingShift.manualAmount = double.tryParse(manualCtrl.text) ?? 0.0;
-          } else {
-            widget.period.shifts.add(Shift(id: const Uuid().v4(), date: tempDate, rawTimeIn: tIn, rawTimeOut: tOut, isManualPay: isManual, manualAmount: double.tryParse(manualCtrl.text) ?? 0.0));
-          }
-          widget.period.shifts.sort((a, b) => b.date.compareTo(a.date));
-          _saveChanges();
-        });
       }
-    });
+      setState(() {
+        if (existingShift != null) {
+          existingShift.date = tempDate; existingShift.rawTimeIn = tIn; existingShift.rawTimeOut = tOut;
+          existingShift.isManualPay = isManual; existingShift.manualAmount = double.tryParse(manualCtrl.text) ?? 0.0;
+        } else {
+          widget.period.shifts.add(Shift(id: const Uuid().v4(), date: tempDate, rawTimeIn: tIn, rawTimeOut: tOut, isManualPay: isManual, manualAmount: double.tryParse(manualCtrl.text) ?? 0.0));
+        }
+        widget.period.shifts.sort((a, b) => b.date.compareTo(a.date));
+        _saveChanges();
+      });
+    }
   }
 
   @override
   Widget build(BuildContext context) {
-    // 1. Get the Global Hourly Rate from Provider
     final dataManager = Provider.of<DataManager>(context);
     final double hourlyRate = dataManager.defaultHourlyRate;
-
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
     
-    // 2. Pass the Global Rate into calculation
     final double totalPay = widget.period.getTotalPay(
       widget.shiftStart, widget.shiftEnd, 
-      hourlyRate: hourlyRate, // FIXED: Now passing required rate
+      hourlyRate: hourlyRate, 
       enableLate: widget.enableLate, 
       enableOt: widget.enableOt
     );
@@ -164,14 +221,13 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                    ]),
                 const SizedBox(height: 12),
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                    _buildStatPill("Regular: ${totalReg.toStringAsFixed(1)}h", Colors.grey, isDark),
-                    if (widget.enableOt) ...[
+                    _buildStatPill("Regular: ${_formatDuration(totalReg)}", Colors.grey, isDark),
+                    if (widget.enableOt && totalOT > 0) ...[
                       const SizedBox(width: 10),
-                      _buildStatPill("Overtime: ${totalOT.toStringAsFixed(1)}h", Colors.blue, isDark),
+                      _buildStatPill("Overtime: ${_formatDuration(totalOT)}", Colors.blue, isDark),
                     ]
                 ]),
                 const SizedBox(height: 12),
-                // 3. Removed Rate Editor - Now displaying the Global Rate from Settings
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(20)),
@@ -193,6 +249,15 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                     final s = widget.period.shifts[i];
                     int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
                     double lateHours = lateMins / 60.0;
+                    
+                    // Display: Honest (unrounded) hours
+                    double regHours = s.getRegularHours(
+                      widget.shiftStart, 
+                      widget.shiftEnd, 
+                      isLateEnabled: widget.enableLate, 
+                      roundEndTime: false 
+                    );
+                    double otHours = s.getOvertimeHours(widget.shiftStart, widget.shiftEnd);
 
                     return Dismissible(
                       key: Key(s.id),
@@ -204,7 +269,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                         return confirm; 
                       },
                       onDismissed: (d) {
-                        playClickSound(context);
+                        AudioService().playDelete();
                         setState(() { widget.period.shifts.removeAt(i); _saveChanges(); });
                       },
                       child: GestureDetector(
@@ -223,11 +288,9 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> {
                                       Text("${formatTime(context, s.rawTimeIn, widget.use24HourFormat)} - ${formatTime(context, s.rawTimeOut, widget.use24HourFormat)}", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
                                       const SizedBox(height: 4),
                                       Row(children: [
-                                          _buildTag("Reg: ${s.getRegularHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", Colors.grey, isDark),
-                                          // 4. FIXED: Passing mandatory shiftEnd
-                                          if (widget.enableOt && s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) > 0) 
-                                            _buildTag("OT: ${s.getOvertimeHours(widget.shiftStart, widget.shiftEnd).toStringAsFixed(1)}h", Colors.blue, isDark),
-                                          if (widget.enableLate && lateHours > 0) _buildTag("Late: ${lateHours.toStringAsFixed(1)}h", Colors.redAccent, isDark),
+                                          _buildTag("Reg: ${_formatDuration(regHours)}", Colors.grey, isDark),
+                                          if (widget.enableOt && otHours > 0) _buildTag("OT: ${_formatDuration(otHours)}", Colors.blue, isDark),
+                                          if (widget.enableLate && lateHours > 0) _buildTag("Late: ${_formatDuration(lateHours)}", Colors.redAccent, isDark),
                                       ]),
                                     ]
                                 ]),

@@ -51,12 +51,23 @@ class Shift {
     );
   }
 
-  double getRegularHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    return PayrollCalculator.calculateRegularHours(rawTimeIn, rawTimeOut, globalStart, globalEnd);
+  // UPDATED: Now accepts roundEndTime to support both Display (false) and Pay (true) modes
+  double getRegularHours(TimeOfDay globalStart, TimeOfDay globalEnd, {
+    required bool isLateEnabled, 
+    bool roundEndTime = true
+  }) {
+    return PayrollCalculator.calculateRegularHours(
+      rawIn: rawTimeIn, 
+      rawOut: rawTimeOut, 
+      shiftStart: globalStart, 
+      shiftEnd: globalEnd,
+      isLateEnabled: isLateEnabled,
+      roundEndTime: roundEndTime // Passes flag to calculator
+    );
   }
 
   double getOvertimeHours(TimeOfDay globalStart, TimeOfDay globalEnd) {
-    return PayrollCalculator.calculateOvertimeHours(rawTimeIn, rawTimeOut, globalEnd);
+    return PayrollCalculator.calculateOvertimeHours(rawTimeOut, globalEnd);
   }
 }
 
@@ -66,7 +77,7 @@ class PayPeriod {
   DateTime start;
   DateTime end;
   DateTime lastEdited; 
-  double hourlyRate; // This is now a legacy field, usually ignored in favor of global
+  double hourlyRate; 
   List<Shift> shifts;
 
   PayPeriod({
@@ -95,7 +106,7 @@ class PayPeriod {
     );
   }
 
-  // UPDATED: Now requires hourlyRate to be passed in from Global Settings
+  /// Calculates total pay using Global Rate and Settings
   double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {
     required double hourlyRate, 
     bool enableLate = true, 
@@ -108,14 +119,24 @@ class PayPeriod {
         continue;
       }
 
-      double hours = shift.getRegularHours(shiftStart, shiftEnd);
+      // 1. Calculate Base Hours (STRICT MODE: roundEndTime = true)
+      // This ensures we only pay for completed 30-minute blocks
+      double hours = shift.getRegularHours(shiftStart, shiftEnd, 
+        isLateEnabled: enableLate,
+        roundEndTime: true // STRICT PAY
+      );
+      
+      // 2. Calculate OT
       double ot = enableOt ? shift.getOvertimeHours(shiftStart, shiftEnd) : 0.0;
       
+      // 3. Calculate Base Pay
       double pay = (hours * hourlyRate) + (ot * hourlyRate * 1.25);
 
+      // 4. Apply Specific Late Deduction (Only if enabled)
       if (enableLate) {
         int lateMins = PayrollCalculator.calculateLateMinutes(shift.rawTimeIn, shiftStart);
         if (lateMins > 0) {
+          // Deduct exact minute value
           pay -= (lateMins / 60.0) * hourlyRate;
         }
       }
@@ -125,7 +146,8 @@ class PayPeriod {
   }
 
   double getTotalRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
-    return shifts.fold(0, (sum, s) => sum + s.getRegularHours(shiftStart, shiftEnd));
+    // For general summary, we show the PAID hours (Strict Mode)
+    return shifts.fold(0, (sum, s) => sum + s.getRegularHours(shiftStart, shiftEnd, isLateEnabled: true, roundEndTime: true));
   }
   
   double getTotalOvertimeHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
