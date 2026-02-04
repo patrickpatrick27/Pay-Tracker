@@ -60,17 +60,27 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
   final ScrollController _scrollController = ScrollController();
   double _appBarOpacity = 0.0;
 
+  // --- OFFLINE SESSION CACHE ---
+  String? _cachedEmail;
+  String? _cachedPhoto;
+
   @override
   void initState() {
     super.initState();
+    // 1. Force load local data immediately (Offline Support)
     _loadLocalData();
-    // Add listener for fluid scroll
+    
+    // 2. Setup Scroll Listener for Fluid AppBar
     _scrollController.addListener(_onScroll);
     
     WidgetsBinding.instance.addPostFrameCallback((_) {
       final manager = Provider.of<DataManager>(context, listen: false);
       manager.addListener(() {
-        if (mounted && manager.isAuthenticated) {
+        if (mounted) {
+           // If manager connects, refresh data AND cache the session
+           if (manager.isAuthenticated) {
+             _cacheUserSession(manager);
+           }
            _loadLocalData();
         }
       });
@@ -83,9 +93,8 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     super.dispose();
   }
 
-  // Calculate opacity based on scroll offset
   void _onScroll() {
-    const double transitionDistance = 100.0; // Distance to fully fade in
+    const double transitionDistance = 100.0; 
     final double offset = _scrollController.offset;
     final double newOpacity = (offset / transitionDistance).clamp(0.0, 1.0);
 
@@ -96,10 +105,32 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     }
   }
 
+  // --- OFFLINE SESSION LOGIC ---
+  Future<void> _cacheUserSession(DataManager manager) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (manager.userEmail != null) {
+      await prefs.setString('cached_user_email', manager.userEmail!);
+      if (manager.userPhoto != null) {
+        await prefs.setString('cached_user_photo', manager.userPhoto!);
+      }
+    }
+  }
+
+  Future<void> _loadCachedSession() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      _cachedEmail = prefs.getString('cached_user_email');
+      _cachedPhoto = prefs.getString('cached_user_photo');
+    });
+  }
+
   // --- LOCAL DATA HANDLING ---
   Future<void> _loadLocalData() async {
     final prefs = await SharedPreferences.getInstance();
     
+    // Load session info alongside data
+    await _loadCachedSession();
+
     setState(() {
       _hideMoney = prefs.getBool('setting_hide_money') ?? false;
       _currencySymbol = prefs.getString('setting_currency_symbol') ?? '₱';
@@ -152,6 +183,12 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     );
 
     try {
+      // Try to connect first if we are in "Cached Mode"
+      if (!manager.isAuthenticated) {
+         // FIXED: Changed .signIn() to .login()
+         try { await manager.login(); } catch (_) {}
+      }
+
       String? cloudJson = await manager.fetchCloudDataOnly(); 
       
       if (cloudJson == null || cloudJson.isEmpty) {
@@ -178,15 +215,21 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Sync Error: $e"), backgroundColor: Colors.red));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Sync failed. You might be offline."), backgroundColor: Colors.red));
       }
     }
   }
 
   Future<void> _uploadLocalToCloud() async {
     final manager = Provider.of<DataManager>(context, listen: false);
-    final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
     
+    // Try to connect if offline
+    if (!manager.isAuthenticated) {
+         // FIXED: Changed .signIn() to .login()
+         try { await manager.login(); } catch (_) {}
+    }
+
+    final List<Map<String, dynamic>> jsonList = periods.map((e) => e.toJson()).toList();
     bool success = await manager.syncPayrollToCloud(jsonList);
     
     if (mounted) {
@@ -448,16 +491,28 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
   @override
   Widget build(BuildContext context) {
+    // Primary Color (Violet)
     final primaryColor = Theme.of(context).colorScheme.primary;
+    // Check Brightness directly
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
     return Consumer<DataManager>(
       builder: (context, dataManager, child) {
+        
+        // --- OFFLINE SESSION LOGIC ---
+        // If manager has data, use it. If not (offline), use cached data.
+        final String? displayEmail = dataManager.userEmail ?? _cachedEmail;
+        final String? displayPhoto = dataManager.userPhoto ?? _cachedPhoto;
+        final bool isOfflineButRemembered = (!dataManager.isAuthenticated && displayEmail != null);
+        final bool isTrulyGuest = (displayEmail == null);
+
         return Scaffold(
           // 1. Extend body so content scrolls behind AppBar
           extendBodyBehindAppBar: true, 
           
           appBar: AppBar(
+            // Ensures status bar icons change color correctly (Dark icons on light bg, Light on dark)
+            systemOverlayStyle: isDark ? SystemUiOverlayStyle.light : SystemUiOverlayStyle.dark,
             title: const Text("Pay Tracker", style: TextStyle(fontWeight: FontWeight.bold, letterSpacing: -0.5)),
             centerTitle: false, 
             elevation: 0,
@@ -474,12 +529,20 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                 alignment: Alignment.topRight,
                 children: [
                   IconButton(
-                    icon: Icon(CupertinoIcons.cloud_upload, color: Theme.of(context).iconTheme.color), 
-                    onPressed: (!dataManager.isGuest) 
-                      ? () => _performManualSync() 
-                      : () { ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login required to sync."))); },
+                    // Change icon color if we are in "Offline but Remembered" mode
+                    icon: Icon(
+                      isOfflineButRemembered ? Icons.cloud_off : CupertinoIcons.cloud_upload, 
+                      color: isOfflineButRemembered ? Colors.grey : Theme.of(context).iconTheme.color
+                    ), 
+                    onPressed: () {
+                      if (isTrulyGuest) {
+                         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Login required to sync.")));
+                      } else {
+                         _performManualSync();
+                      }
+                    },
                   ),
-                  if (_isUnsynced && !dataManager.isGuest)
+                  if (_isUnsynced && !isTrulyGuest)
                     Positioned(right: 8, top: 8, child: Container(width: 10, height: 10, decoration: BoxDecoration(color: Colors.red, shape: BoxShape.circle, border: Border.all(color: Theme.of(context).scaffoldBackgroundColor, width: 2)))),
                 ],
               ),
@@ -501,21 +564,30 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                 icon: CircleAvatar(
                   radius: 14,
                   backgroundColor: Theme.of(context).colorScheme.primary,
-                  backgroundImage: dataManager.userPhoto != null ? NetworkImage(dataManager.userPhoto!) : null,
-                  child: dataManager.userPhoto == null ? const Icon(CupertinoIcons.person_solid, size: 16, color: Colors.white) : null,
+                  backgroundImage: displayPhoto != null ? NetworkImage(displayPhoto) : null,
+                  child: displayPhoto == null ? const Icon(CupertinoIcons.person_solid, size: 16, color: Colors.white) : null,
                 ),
                 itemBuilder: (context) {
-                  if (dataManager.isGuest) {
+                  if (isTrulyGuest) {
                     return [const PopupMenuItem(value: 'login', child: Text("Log In to Sync"))];
                   }
                   return [
-                    PopupMenuItem(enabled: false, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Signed in as:", style: TextStyle(fontSize: 10, color: Colors.grey)), Text(dataManager.userEmail ?? "User", style: TextStyle(fontWeight: FontWeight.bold))])),
+                    PopupMenuItem(enabled: false, child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      const Text("Signed in as:", style: TextStyle(fontSize: 10, color: Colors.grey)), 
+                      Text(displayEmail ?? "User", style: const TextStyle(fontWeight: FontWeight.bold)),
+                      if (isOfflineButRemembered) const Text("(Offline Mode)", style: TextStyle(fontSize: 10, color: Colors.orange))
+                    ])),
                     const PopupMenuDivider(),
                     const PopupMenuItem(value: 'logout', child: Row(children: [Icon(Icons.logout, color: Colors.red, size: 20), SizedBox(width: 8), Text("Logout", style: TextStyle(color: Colors.red))])),
                   ];
                 },
-                onSelected: (value) {
+                onSelected: (value) async {
                   if (value == 'logout') {
+                    // Clear the cache on manual logout
+                    final prefs = await SharedPreferences.getInstance();
+                    await prefs.remove('cached_user_email');
+                    await prefs.remove('cached_user_photo');
+                    
                     dataManager.logout().then((_) { if (mounted) _loadLocalData(); });
                   } else if (value == 'login') {
                      dataManager.logout(); 
@@ -532,6 +604,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                   const SizedBox(height: 20), 
                   Text("No Payrolls Yet", style: TextStyle(color: Colors.grey[600], fontSize: 16)), 
                   const SizedBox(height: 10), 
+                  // UPDATED: Oval, Outlined, Theme-Aware FAB
                   FloatingActionButton.extended(
                     onPressed: _createNewPeriod,
                     backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
@@ -628,6 +701,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                     );
                   },
                 ),
+          // UPDATED: Oval, Outlined, Theme-Aware FAB with Label
           floatingActionButton: FloatingActionButton.extended(
             onPressed: _createNewPeriod,
             label: const Text("Add Payroll", style: TextStyle(fontWeight: FontWeight.bold)),

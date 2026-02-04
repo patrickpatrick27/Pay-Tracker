@@ -20,13 +20,13 @@ class DataManager extends ChangeNotifier {
   bool _use24HourFormat = false;
   bool _enableLateDeductions = true;
   bool _enableOvertime = true;
-  double _defaultHourlyRate = 50.0; // NEW: Global Source of Truth
+  double _defaultHourlyRate = 50.0; 
   TimeOfDay _shiftStart = const TimeOfDay(hour: 8, minute: 0);
   TimeOfDay _shiftEnd = const TimeOfDay(hour: 17, minute: 0);
 
   // Getters
   bool get isInitialized => _isInitialized;
-  bool get isAuthenticated => _currentUser != null || _isGuestMode;
+  bool get isAuthenticated => _currentUser != null;
   bool get isGuest => _isGuestMode; 
   String? get userEmail => _currentUser?.email;
   String? get userPhoto => _currentUser?.photoUrl;
@@ -35,7 +35,7 @@ class DataManager extends ChangeNotifier {
   bool get use24HourFormat => _use24HourFormat;
   bool get enableLateDeductions => _enableLateDeductions;
   bool get enableOvertime => _enableOvertime;
-  double get defaultHourlyRate => _defaultHourlyRate; // NEW
+  double get defaultHourlyRate => _defaultHourlyRate; 
   TimeOfDay get shiftStart => _shiftStart;
   TimeOfDay get shiftEnd => _shiftEnd;
 
@@ -48,7 +48,7 @@ class DataManager extends ChangeNotifier {
     _isGuestMode = prefs.getBool('is_guest_mode') ?? false;
     _enableLateDeductions = prefs.getBool('enable_late') ?? true;
     _enableOvertime = prefs.getBool('enable_ot') ?? true;
-    _defaultHourlyRate = prefs.getDouble('default_hourly_rate') ?? 50.0; // NEW
+    _defaultHourlyRate = prefs.getDouble('default_hourly_rate') ?? 50.0;
     
     int startH = prefs.getInt('${kSettingShiftStart}_h') ?? 8;
     int startM = prefs.getInt('${kSettingShiftStart}_m') ?? 0;
@@ -70,14 +70,19 @@ class DataManager extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<bool> loginWithGoogle() async {
+  // --- AUTHENTICATION ---
+
+  // RENAMED from loginWithGoogle to match Dashboard calls
+  Future<void> login() async {
     try {
       _currentUser = await _googleSignIn.signIn();
+      
       if (_currentUser != null) {
         _isGuestMode = false;
         final prefs = await SharedPreferences.getInstance();
         await prefs.setBool('is_guest_mode', false);
 
+        // Auto-fetch data on login
         String? cloudJson = await fetchCloudDataOnly();
         if (cloudJson != null && cloudJson.isNotEmpty) {
            await prefs.setString('pay_tracker_data', cloudJson);
@@ -85,19 +90,26 @@ class DataManager extends ChangeNotifier {
         }
       }
       notifyListeners();
-      return _currentUser != null;
     } catch (e) {
-      return false;
+      print("Login Error: $e");
+      rethrow; // Pass error to UI so SnackBar appears
     }
   }
 
   Future<void> logout() async {
-    await _googleSignIn.signOut();
+    try {
+      await _googleSignIn.disconnect(); // Disconnect clears the cache better than signOut
+    } catch (_) {
+      await _googleSignIn.signOut();
+    }
+    
     _currentUser = null;
-    _isGuestMode = false;
+    _isGuestMode = false; // Reset to require login/guest choice
+    
     final prefs = await SharedPreferences.getInstance();
     await prefs.setBool('is_guest_mode', false);
     await clearLocalData();
+    
     notifyListeners();
   }
 
@@ -143,7 +155,7 @@ class DataManager extends ChangeNotifier {
 
   void updateSettings({
     bool? isDark, bool? is24h, bool? enableLate, bool? enableOt,
-    double? defaultRate, // NEW
+    double? defaultRate,
     TimeOfDay? shiftStart, TimeOfDay? shiftEnd
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -151,7 +163,7 @@ class DataManager extends ChangeNotifier {
     if (is24h != null) { _use24HourFormat = is24h; prefs.setBool(kSetting24h, is24h); }
     if (enableLate != null) { _enableLateDeductions = enableLate; prefs.setBool('enable_late', enableLate); }
     if (enableOt != null) { _enableOvertime = enableOt; prefs.setBool('enable_ot', enableOt); }
-    if (defaultRate != null) { _defaultHourlyRate = defaultRate; prefs.setDouble('default_hourly_rate', defaultRate); } // NEW
+    if (defaultRate != null) { _defaultHourlyRate = defaultRate; prefs.setDouble('default_hourly_rate', defaultRate); }
     
     if (shiftStart != null) { 
       _shiftStart = shiftStart; 
@@ -206,17 +218,6 @@ class DataManager extends ChangeNotifier {
       }
       return true;
     } catch (e) { return false; }
-  }
-
-  Future<String> smartSync(List<Map<String, dynamic>> localData) async {
-    try {
-      String? cloudJson = await fetchCloudDataOnly();
-      if (cloudJson == null) {
-        bool success = await syncPayrollToCloud(localData);
-        return success ? "Cloud backup created." : "Offline: Saved to device.";
-      }
-      return "Cloud data found.";
-    } catch (e) { return "Error: $e"; }
   }
 }
 

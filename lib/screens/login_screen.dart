@@ -18,7 +18,6 @@ class _LoginScreenState extends State<LoginScreen> {
     super.initState();
     // Prompt for update on launch/login screen
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      // The service now uses navigatorKey, so this is bulletproof
       if (mounted) GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: false);
     });
   }
@@ -27,15 +26,22 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
     final dataManager = Provider.of<DataManager>(context, listen: false);
     
-    bool success = await dataManager.loginWithGoogle();
-    
-    if (!mounted) return;
-    setState(() => _isLoading = false);
-
-    if (!success) {
+    try {
+      // FIXED: removed 'bool success =' since login() returns void
+      await dataManager.login();
+      
+      // If we get here, login was successful (no error thrown)
+      // The DataManager listener will automatically switch screens.
+      
+    } catch (e) {
+      // If login failed, an error is thrown, so we catch it here
+      if (!mounted) return;
+      
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text("Google Sign-In Failed"), backgroundColor: Colors.red),
       );
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 
@@ -63,7 +69,7 @@ class _LoginScreenState extends State<LoginScreen> {
               const Icon(Icons.account_balance_wallet_rounded, size: 80, color: Color(0xFF3F51B5)),
               const SizedBox(height: 20),
               const Text(
-                "Pay Tracker", // Consistent name with Dashboard
+                "Pay Tracker", 
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
               ),
