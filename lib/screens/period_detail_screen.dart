@@ -170,67 +170,124 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                        const Text("Shift Type", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
                        const SizedBox(height: 8),
                        
-                       Row(
-                         children: [
-                           Expanded(
-                             child: GestureDetector(
-                               onTap: () => setModalState(() => isHoliday = false),
-                               child: AnimatedContainer(
-                                 duration: const Duration(milliseconds: 200),
-                                 curve: Curves.easeInOut,
-                                 padding: const EdgeInsets.symmetric(vertical: 12),
-                                 alignment: Alignment.center,
-                                 decoration: BoxDecoration(
-                                   color: !isHoliday ? primaryColor.withOpacity(0.1) : Colors.transparent,
-                                   border: Border.all(color: !isHoliday ? primaryColor : Colors.grey[400]!),
-                                   borderRadius: BorderRadius.circular(8)
-                                 ),
-                                 child: Text("Regular", style: TextStyle(fontWeight: FontWeight.bold, color: !isHoliday ? primaryColor : Colors.grey)),
-                               ),
-                             ),
-                           ),
-                           const SizedBox(width: 10),
-                           Expanded(
-                             child: GestureDetector(
-                               onTap: () => setModalState(() => isHoliday = true),
-                               child: AnimatedContainer(
-                                 duration: const Duration(milliseconds: 200),
-                                 curve: Curves.easeInOut,
-                                 padding: const EdgeInsets.symmetric(vertical: 12),
-                                 alignment: Alignment.center,
-                                 decoration: BoxDecoration(
-                                   color: isHoliday ? Colors.orange.withOpacity(0.1) : Colors.transparent,
-                                   border: Border.all(color: isHoliday ? Colors.orange : Colors.grey[400]!),
-                                   borderRadius: BorderRadius.circular(8)
-                                 ),
-                                 child: Text("Holiday / Rest", style: TextStyle(fontWeight: FontWeight.bold, color: isHoliday ? Colors.orange : Colors.grey)),
-                               ),
-                             ),
-                           ),
-                         ],
-                       ),
-                       
-                       // SLOWER ANIMATION FOR RETURN
-                       AnimatedSize(
-                         duration: const Duration(milliseconds: 600), // Slower animation
-                         curve: Curves.easeInOut,
-                         alignment: Alignment.topCenter, // Ensures smooth return
-                         child: isHoliday ? Column(
+                       // === SMOOTH SLIDING TOGGLE ===
+                       Container(
+                         height: 45,
+                         decoration: BoxDecoration(
+                           color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[200],
+                           borderRadius: BorderRadius.circular(12),
+                         ),
+                         child: Stack(
                            children: [
-                             const SizedBox(height: 12),
-                             TextField(
-                               controller: multiplierCtrl,
-                               keyboardType: TextInputType.number,
-                               decoration: InputDecoration(
-                                 labelText: "Percent Increase (%)",
-                                 suffixText: "%",
-                                 helperText: "e.g. 30 for Regular Holiday, 100 for Double Pay",
-                                 border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                                 prefixIcon: const Icon(Icons.percent, color: Colors.orange),
+                             // The Pill
+                             AnimatedAlign(
+                               alignment: isHoliday ? Alignment.centerRight : Alignment.centerLeft,
+                               // Slower duration for smoothness (450ms)
+                               duration: const Duration(milliseconds: 450), 
+                               // FastOutSlowIn creates a very premium "friction" feel
+                               curve: Curves.fastOutSlowIn, 
+                               child: FractionallySizedBox(
+                                 widthFactor: 0.5,
+                                 child: Container(
+                                   margin: const EdgeInsets.all(4),
+                                   decoration: BoxDecoration(
+                                     color: isDark ? const Color(0xFF404040) : Colors.white,
+                                     borderRadius: BorderRadius.circular(8),
+                                     boxShadow: [
+                                       BoxShadow(
+                                         color: Colors.black.withOpacity(0.1),
+                                         blurRadius: 4,
+                                         offset: const Offset(0, 1),
+                                       )
+                                     ]
+                                   ),
+                                 ),
                                ),
+                             ),
+                             
+                             // The Labels
+                             Row(
+                               children: [
+                                 Expanded(
+                                   child: GestureDetector(
+                                     onTap: () => setModalState(() => isHoliday = false),
+                                     behavior: HitTestBehavior.translucent,
+                                     child: Center(
+                                       child: AnimatedDefaultTextStyle(
+                                         duration: const Duration(milliseconds: 450),
+                                         style: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           color: !isHoliday ? primaryColor : Colors.grey,
+                                         ),
+                                         child: const Text("Regular"),
+                                       ),
+                                     ),
+                                   ),
+                                 ),
+                                 Expanded(
+                                   child: GestureDetector(
+                                     onTap: () => setModalState(() => isHoliday = true),
+                                     behavior: HitTestBehavior.translucent,
+                                     child: Center(
+                                       child: AnimatedDefaultTextStyle(
+                                         duration: const Duration(milliseconds: 450),
+                                         style: TextStyle(
+                                           fontWeight: FontWeight.bold,
+                                           color: isHoliday ? Colors.orange : Colors.grey,
+                                         ),
+                                         child: const Text("Holiday / Rest"),
+                                       ),
+                                     ),
+                                   ),
+                                 ),
+                                ],
                              ),
                            ],
-                         ) : const SizedBox(width: double.infinity), // Keeps width consistent during shrink
+                         ),
+                       ),
+                       
+                       // === SMOOTHER DRAWER SLIDE ===
+                       AnimatedSwitcher(
+                         duration: const Duration(milliseconds: 500), // Slower to match toggle
+                         transitionBuilder: (Widget child, Animation<double> animation) {
+                           final offsetAnimation = Tween<Offset>(
+                             begin: const Offset(-0.2, 0.0), 
+                             end: Offset.zero,
+                           ).animate(CurvedAnimation(parent: animation, curve: Curves.fastOutSlowIn));
+                           
+                           return SizeTransition(
+                             sizeFactor: animation,
+                             axisAlignment: -1.0,
+                             child: FadeTransition(
+                               opacity: animation,
+                               child: SlideTransition(
+                                 position: offsetAnimation,
+                                 child: child,
+                               ),
+                             ),
+                           );
+                         },
+                         child: isHoliday 
+                           ? Padding(
+                               key: const ValueKey("HolidayInput"),
+                               padding: const EdgeInsets.only(top: 12.0),
+                               child: TextField(
+                                 controller: multiplierCtrl,
+                                 keyboardType: TextInputType.number,
+                                 // UNIFIED STYLE: Matches Remarks (Filled, No Border)
+                                 decoration: InputDecoration(
+                                   labelText: "Percent Increase (%)",
+                                   suffixText: "%",
+                                   helperText: "e.g. 30 for Holiday, 100 for Double Pay",
+                                   prefixIcon: const Icon(Icons.percent, color: Colors.orange),
+                                   filled: true,
+                                   fillColor: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100],
+                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
+                                 ),
+                               ),
+                             )
+                           : const SizedBox.shrink(key: ValueKey("Empty")),
                        ),
 
                     ] else ...[
