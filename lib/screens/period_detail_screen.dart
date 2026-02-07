@@ -2,13 +2,12 @@ import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import '../models/data_models.dart';
 import '../utils/helpers.dart'; 
 import '../utils/calculations.dart';
-import '../widgets/custom_pickers.dart';
 import '../services/data_manager.dart'; 
 import '../services/audio_service.dart';
+import '../widgets/shift_form_sheet.dart'; // NEW IMPORT
 
 class PeriodDetailScreen extends StatefulWidget {
   final PayPeriod period;
@@ -46,13 +45,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
     ScaffoldMessenger.of(context).hideCurrentSnackBar();
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.error_outline, color: Colors.white),
-            const SizedBox(width: 10),
-            Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold))),
-          ],
-        ),
+        content: Row(children: [const Icon(Icons.error_outline, color: Colors.white), const SizedBox(width: 10), Expanded(child: Text(message, style: const TextStyle(fontWeight: FontWeight.bold)))]),
         backgroundColor: Colors.red,
         behavior: SnackBarBehavior.floating, 
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
@@ -77,29 +70,14 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
 
   double _calculateShiftPay(Shift s, double hourlyRate) {
     if (s.isManualPay) return s.manualAmount;
-
-    double regHours = s.getRegularHours(
-      widget.shiftStart, 
-      widget.shiftEnd, 
-      isLateEnabled: widget.enableLate, 
-      roundEndTime: true
-    );
-    
+    double regHours = s.getRegularHours(widget.shiftStart, widget.shiftEnd, isLateEnabled: widget.enableLate, roundEndTime: true);
     double otHours = widget.enableOt ? s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) : 0.0;
-    
     double pay = (regHours * hourlyRate) + (otHours * hourlyRate * 1.25);
-
     if (widget.enableLate) {
       int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
-      if (lateMins > 0) {
-        pay -= (lateMins / 60.0) * hourlyRate;
-      }
+      if (lateMins > 0) pay -= (lateMins / 60.0) * hourlyRate;
     }
-
-    if (s.isHoliday && s.holidayMultiplier > 0) {
-      pay += pay * (s.holidayMultiplier / 100.0);
-    }
-    
+    if (s.isHoliday && s.holidayMultiplier > 0) pay += pay * (s.holidayMultiplier / 100.0);
     return pay > 0 ? pay : 0.0;
   }
 
@@ -108,260 +86,44 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
     widget.onSave(); 
   }
 
-  void _showShiftDialog({Shift? existingShift}) async {
+  void _openShiftModal({Shift? existingShift}) async {
     AudioService().playClick();
-    
-    DateTime tempDate = existingShift?.date ?? widget.period.start;
+    DateTime defaultDate = existingShift?.date ?? widget.period.start;
     if (existingShift == null) {
       DateTime now = DateTime.now();
-      if (now.isAfter(widget.period.start) && now.isBefore(widget.period.end)) tempDate = now;
+      if (now.isAfter(widget.period.start) && now.isBefore(widget.period.end)) defaultDate = now;
     }
-    TimeOfDay tIn = existingShift?.rawTimeIn ?? widget.shiftStart;
-    TimeOfDay tOut = existingShift?.rawTimeOut ?? widget.shiftEnd;
-    
-    bool isManual = existingShift?.isManualPay ?? false;
-    bool isHoliday = existingShift?.isHoliday ?? false;
-    
-    TextEditingController multiplierCtrl = TextEditingController(text: existingShift != null ? existingShift.holidayMultiplier.toStringAsFixed(0) : "30");
-    TextEditingController manualCtrl = TextEditingController(text: existingShift?.manualAmount.toString() ?? "0");
-    TextEditingController remarksCtrl = TextEditingController(text: existingShift?.remarks ?? ""); 
-    
-    final bool isDark = Theme.of(context).brightness == Brightness.dark;
-    final Color dlgBg = isDark ? const Color(0xFF1E1E1E) : Colors.white;
-    final Color primaryColor = Theme.of(context).colorScheme.primary;
 
-    var result = await showModalBottomSheet(
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    
+    // === REFACTORED: Using extracted Widget ===
+    final result = await showModalBottomSheet(
       context: context, 
       isScrollControlled: true, 
-      backgroundColor: dlgBg,
+      backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
       shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(25))),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SingleChildScrollView(
-              child: Padding(
-                padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom + 20, left: 24, right: 24, top: 24),
-                child: Column(
-                  mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [Text(existingShift == null ? "Add Shift" : "Edit Shift", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 22)), IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(CupertinoIcons.xmark_circle_fill, color: Colors.grey))]),
-                    const SizedBox(height: 20),
-                    
-                    GestureDetector(
-                      onTap: () async {
-                        DateTime? picked = await showFastDatePicker(context, tempDate);
-                        if (picked != null) setModalState(() => tempDate = picked);
-                      },
-                      child: Container(padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16), decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(12)), child: Row(children: [const Icon(CupertinoIcons.calendar, color: Colors.blue), const SizedBox(width: 12), Text(DateFormat('MMM d, yyyy').format(tempDate), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))])),
-                    ),
-                    const SizedBox(height: 16),
-
-                    Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [const Text("Manual Pay Override", style: TextStyle(fontWeight: FontWeight.w500)), CupertinoSwitch(value: isManual, activeColor: Colors.blue, onChanged: (val) { AudioService().playClick(); setModalState(() => isManual = val); })]),
-                    const Divider(height: 24),
-                    
-                    if (!isManual) ...[
-                       Row(children: [
-                           Expanded(child: GestureDetector(onTap: () async { final t = await showFastTimePicker(context, tIn, widget.use24HourFormat); if (t!=null) setModalState(() => tIn = t); }, child: Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.withOpacity(0.2))), child: Column(children: [const Text("IN", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue)), const SizedBox(height: 4), Text(formatTime(context, tIn, widget.use24HourFormat), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))])))),
-                           const SizedBox(width: 12),
-                           Expanded(child: GestureDetector(onTap: () async { final t = await showFastTimePicker(context, tOut, widget.use24HourFormat); if (t!=null) setModalState(() => tOut = t); }, child: Container(padding: const EdgeInsets.all(16), decoration: BoxDecoration(color: Colors.blue.withOpacity(0.05), borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.blue.withOpacity(0.2))), child: Column(children: [const Text("OUT", style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.blue)), const SizedBox(height: 4), Text(formatTime(context, tOut, widget.use24HourFormat), style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold))])))),
-                       ]),
-                       const SizedBox(height: 20),
-
-                       const Text("Shift Type", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
-                       const SizedBox(height: 8),
-                       
-                       // === SMOOTH SLIDING TOGGLE ===
-                       Container(
-                         height: 45,
-                         decoration: BoxDecoration(
-                           color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[200],
-                           borderRadius: BorderRadius.circular(12),
-                         ),
-                         child: Stack(
-                           children: [
-                             // The Pill
-                             AnimatedAlign(
-                               alignment: isHoliday ? Alignment.centerRight : Alignment.centerLeft,
-                               // Slower duration for smoothness (450ms)
-                               duration: const Duration(milliseconds: 450), 
-                               // FastOutSlowIn creates a very premium "friction" feel
-                               curve: Curves.fastOutSlowIn, 
-                               child: FractionallySizedBox(
-                                 widthFactor: 0.5,
-                                 child: Container(
-                                   margin: const EdgeInsets.all(4),
-                                   decoration: BoxDecoration(
-                                     color: isDark ? const Color(0xFF404040) : Colors.white,
-                                     borderRadius: BorderRadius.circular(8),
-                                     boxShadow: [
-                                       BoxShadow(
-                                         color: Colors.black.withOpacity(0.1),
-                                         blurRadius: 4,
-                                         offset: const Offset(0, 1),
-                                       )
-                                     ]
-                                   ),
-                                 ),
-                               ),
-                             ),
-                             
-                             // The Labels
-                             Row(
-                               children: [
-                                 Expanded(
-                                   child: GestureDetector(
-                                     onTap: () => setModalState(() => isHoliday = false),
-                                     behavior: HitTestBehavior.translucent,
-                                     child: Center(
-                                       child: AnimatedDefaultTextStyle(
-                                         duration: const Duration(milliseconds: 450),
-                                         style: TextStyle(
-                                           fontWeight: FontWeight.bold,
-                                           color: !isHoliday ? primaryColor : Colors.grey,
-                                         ),
-                                         child: const Text("Regular"),
-                                       ),
-                                     ),
-                                   ),
-                                 ),
-                                 Expanded(
-                                   child: GestureDetector(
-                                     onTap: () => setModalState(() => isHoliday = true),
-                                     behavior: HitTestBehavior.translucent,
-                                     child: Center(
-                                       child: AnimatedDefaultTextStyle(
-                                         duration: const Duration(milliseconds: 450),
-                                         style: TextStyle(
-                                           fontWeight: FontWeight.bold,
-                                           color: isHoliday ? Colors.orange : Colors.grey,
-                                         ),
-                                         child: const Text("Holiday / Rest"),
-                                       ),
-                                     ),
-                                   ),
-                                 ),
-                                ],
-                             ),
-                           ],
-                         ),
-                       ),
-                       
-                       // === SMOOTHER DRAWER SLIDE ===
-                       AnimatedSwitcher(
-                         duration: const Duration(milliseconds: 500), // Slower to match toggle
-                         transitionBuilder: (Widget child, Animation<double> animation) {
-                           final offsetAnimation = Tween<Offset>(
-                             begin: const Offset(-0.2, 0.0), 
-                             end: Offset.zero,
-                           ).animate(CurvedAnimation(parent: animation, curve: Curves.fastOutSlowIn));
-                           
-                           return SizeTransition(
-                             sizeFactor: animation,
-                             axisAlignment: -1.0,
-                             child: FadeTransition(
-                               opacity: animation,
-                               child: SlideTransition(
-                                 position: offsetAnimation,
-                                 child: child,
-                               ),
-                             ),
-                           );
-                         },
-                         child: isHoliday 
-                           ? Padding(
-                               key: const ValueKey("HolidayInput"),
-                               padding: const EdgeInsets.only(top: 12.0),
-                               child: TextField(
-                                 controller: multiplierCtrl,
-                                 keyboardType: TextInputType.number,
-                                 // UNIFIED STYLE: Matches Remarks (Filled, No Border)
-                                 decoration: InputDecoration(
-                                   labelText: "Percent Increase (%)",
-                                   suffixText: "%",
-                                   helperText: "e.g. 30 for Holiday, 100 for Double Pay",
-                                   prefixIcon: const Icon(Icons.percent, color: Colors.orange),
-                                   filled: true,
-                                   fillColor: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100],
-                                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                                   contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-                                 ),
-                               ),
-                             )
-                           : const SizedBox.shrink(key: ValueKey("Empty")),
-                       ),
-
-                    ] else ...[
-                       TextField(controller: manualCtrl, keyboardType: TextInputType.number, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18), decoration: InputDecoration(labelText: "Amount", border: const OutlineInputBorder(), prefixText: "${widget.currencySymbol} "))
-                    ],
-                    
-                    const SizedBox(height: 16),
-                    TextField(
-                      controller: remarksCtrl,
-                      textCapitalization: TextCapitalization.sentences,
-                      decoration: InputDecoration(
-                        labelText: "Remarks (Optional)",
-                        prefixIcon: const Icon(CupertinoIcons.text_bubble, size: 20, color: Colors.grey),
-                        filled: true,
-                        fillColor: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100],
-                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
-                        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14)
-                      ),
-                    ),
-
-                    const SizedBox(height: 30),
-                    SizedBox(width: double.infinity, height: 50, child: ElevatedButton(
-                      style: ElevatedButton.styleFrom(backgroundColor: Theme.of(context).colorScheme.primary, foregroundColor: Colors.white, shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12))), 
-                      onPressed: () { 
-                        AudioService().playClick(); 
-                        if (!isManual) {
-                          double inVal = tIn.hour + tIn.minute / 60.0;
-                          double outVal = tOut.hour + tOut.minute / 60.0;
-                          if (inVal >= outVal) { Navigator.pop(context, "INVALID_TIME"); return; }
-                        }
-                        Navigator.pop(context, true); 
-                      }, 
-                      child: const Text("Save Shift", style: TextStyle(fontWeight: FontWeight.bold))
-                    )),
-                    const SizedBox(height: 20),
-                  ],
-                ),
-              ),
-            );
-          },
-        );
-      }
+      builder: (ctx) => ShiftFormSheet(
+        existingShift: existingShift,
+        defaultDate: defaultDate,
+        defaultStart: widget.shiftStart,
+        defaultEnd: widget.shiftEnd,
+        use24HourFormat: widget.use24HourFormat,
+        currencySymbol: widget.currencySymbol,
+        currentShifts: widget.period.shifts,
+      ),
     );
 
     if (result == "INVALID_TIME") {
       _showErrorSnackBar("Time In must be earlier than Time Out.");
-    } 
-    else if (result == true) {
-      if (existingShift == null && isDuplicateShift(widget.period.shifts, tempDate)) {
-           _showErrorSnackBar("Error: Date already exists!");
-           return;
-      }
+    } else if (result == "DUPLICATE_DATE") {
+      _showErrorSnackBar("Error: Date already exists!");
+    } else if (result is Shift) {
       setState(() {
-        final double multiplier = double.tryParse(multiplierCtrl.text) ?? 0.0;
-
         if (existingShift != null) {
-          existingShift.date = tempDate; existingShift.rawTimeIn = tIn; existingShift.rawTimeOut = tOut;
-          existingShift.isManualPay = isManual; 
-          existingShift.manualAmount = double.tryParse(manualCtrl.text) ?? 0.0;
-          existingShift.remarks = remarksCtrl.text.trim();
-          existingShift.isHoliday = isHoliday;
-          existingShift.holidayMultiplier = multiplier;
+           int index = widget.period.shifts.indexWhere((s) => s.id == existingShift.id);
+           if (index != -1) widget.period.shifts[index] = result;
         } else {
-          widget.period.shifts.add(Shift(
-            id: const Uuid().v4(), 
-            date: tempDate, 
-            rawTimeIn: tIn, 
-            rawTimeOut: tOut, 
-            isManualPay: isManual, 
-            manualAmount: double.tryParse(manualCtrl.text) ?? 0.0,
-            remarks: remarksCtrl.text.trim(),
-            isHoliday: isHoliday,
-            holidayMultiplier: multiplier,
-          ));
+           widget.period.shifts.add(result);
         }
         widget.period.shifts.sort((a, b) => b.date.compareTo(a.date));
         _saveChanges();
@@ -377,13 +139,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
     final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
     final Color primaryColor = Theme.of(context).colorScheme.primary;
     
-    final double totalPay = widget.period.getTotalPay(
-      widget.shiftStart, widget.shiftEnd, 
-      hourlyRate: hourlyRate, 
-      enableLate: widget.enableLate, 
-      enableOt: widget.enableOt
-    );
-
+    final double totalPay = widget.period.getTotalPay(widget.shiftStart, widget.shiftEnd, hourlyRate: hourlyRate, enableLate: widget.enableLate, enableOt: widget.enableOt);
     final double totalReg = widget.period.getTotalRegularHours(widget.shiftStart, widget.shiftEnd);
     final double totalOT = widget.enableOt ? widget.period.getTotalOvertimeHours(widget.shiftStart, widget.shiftEnd) : 0.0;
 
@@ -416,10 +172,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(20)),
-                  child: Text(
-                    "Global Rate: ${widget.currencySymbol}${hourlyRate.toStringAsFixed(0)}/hr",
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: subTextColor),
-                  ),
+                  child: Text("Global Rate: ${widget.currencySymbol}${hourlyRate.toStringAsFixed(0)}/hr", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: subTextColor)),
                 ),
               ],
             ),
@@ -434,11 +187,7 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                     final s = widget.period.shifts[i];
                     int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
                     double lateHours = lateMins / 60.0;
-                    
-                    double regHours = s.getRegularHours(
-                      widget.shiftStart, widget.shiftEnd, 
-                      isLateEnabled: widget.enableLate, roundEndTime: false 
-                    );
+                    double regHours = s.getRegularHours(widget.shiftStart, widget.shiftEnd, isLateEnabled: widget.enableLate, roundEndTime: false);
                     double otHours = s.getOvertimeHours(widget.shiftStart, widget.shiftEnd);
                     double shiftPay = _calculateShiftPay(s, hourlyRate);
 
@@ -446,83 +195,37 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                       key: Key(s.id),
                       direction: DismissDirection.endToStart,
                       background: Container(alignment: Alignment.centerRight, padding: const EdgeInsets.only(right: 20), margin: const EdgeInsets.only(bottom: 12), decoration: BoxDecoration(color: Colors.red, borderRadius: BorderRadius.circular(16)), child: const Icon(CupertinoIcons.delete, color: Colors.white)),
-                      confirmDismiss: (d) async { 
-                        bool confirm = false; 
-                        await showConfirmationDialog(context: context, title: "Delete Shift?", content: "Remove this work day?", isDestructive: true, onConfirm: () => confirm = true); 
-                        return confirm; 
-                      },
-                      onDismissed: (d) {
-                        AudioService().playDelete();
-                        setState(() { widget.period.shifts.removeAt(i); _saveChanges(); });
-                      },
+                      confirmDismiss: (d) async { bool confirm = false; await showConfirmationDialog(context: context, title: "Delete Shift?", content: "Remove this work day?", isDestructive: true, onConfirm: () => confirm = true); return confirm; },
+                      onDismissed: (d) { AudioService().playDelete(); setState(() { widget.period.shifts.removeAt(i); _saveChanges(); }); },
                       child: GestureDetector(
-                        onTap: () => _showShiftDialog(existingShift: s), 
+                        onTap: () => _openShiftModal(existingShift: s), 
                         child: Container(
                           margin: const EdgeInsets.only(bottom: 12), padding: const EdgeInsets.all(16),
                           decoration: BoxDecoration(color: Theme.of(context).cardColor, borderRadius: BorderRadius.circular(16), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0,2))]),
                           child: Row(
                             children: [
-                              // Left: Date
                               Container(width: 50, padding: const EdgeInsets.symmetric(vertical: 8), decoration: BoxDecoration(color: isDark ? const Color(0xFF2C2C2C) : Colors.grey[100], borderRadius: BorderRadius.circular(10)), child: Column(children: [Text(DateFormat('MMM').format(s.date).toUpperCase(), style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w800, color: Colors.grey)), Text(DateFormat('dd').format(s.date), style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: isDark ? Colors.white : Colors.black87))])),
                               const SizedBox(width: 16),
-                              
-                              // Middle: Info
                               Expanded(
                                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                     if (s.isManualPay) Text("Flat Pay: ${_getMoneyText(s.manualAmount)}", style: const TextStyle(fontWeight: FontWeight.bold))
                                     else ...[
                                       Text("${formatTime(context, s.rawTimeIn, widget.use24HourFormat)} - ${formatTime(context, s.rawTimeOut, widget.use24HourFormat)}", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
-                                      
-                                      if (s.remarks.isNotEmpty) ...[
-                                        const SizedBox(height: 2),
-                                        Text(
-                                          s.remarks,
-                                          maxLines: 1,
-                                          overflow: TextOverflow.ellipsis,
-                                          style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic),
-                                        ),
-                                        const SizedBox(height: 4),
-                                      ] else ...[
-                                        const SizedBox(height: 4),
-                                      ],
-                                      
+                                      if (s.remarks.isNotEmpty) ...[const SizedBox(height: 2), Text(s.remarks, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600], fontSize: 12, fontStyle: FontStyle.italic)), const SizedBox(height: 4)] else const SizedBox(height: 4),
                                       Wrap(spacing: 6, runSpacing: 4, children: [
                                           _buildTag("Reg: ${_formatDuration(regHours)}", Colors.grey, isDark),
                                           if (widget.enableOt && otHours > 0) _buildTag("OT: ${_formatDuration(otHours)}", Colors.blue, isDark),
                                           if (widget.enableLate && lateHours > 0) _buildTag("Late: ${_formatDuration(lateHours)}", Colors.redAccent, isDark),
-                                          
-                                          if (s.isHoliday && s.holidayMultiplier > 0) 
-                                            _buildHolidayTag(context, "+${s.holidayMultiplier.toStringAsFixed(0)}% Pay"),
+                                          if (s.isHoliday && s.holidayMultiplier > 0) _buildHolidayTag(context, "+${s.holidayMultiplier.toStringAsFixed(0)}% Pay"),
                                       ]),
                                     ]
                                 ]),
                               ),
-
                               const SizedBox(width: 8),
                               Container(
-                                width: 90, 
-                                padding: const EdgeInsets.symmetric(vertical: 8),
-                                decoration: BoxDecoration(
-                                  color: Colors.transparent, 
-                                  borderRadius: BorderRadius.circular(50), 
-                                  border: Border.all(
-                                    color: Theme.of(context).colorScheme.primary, 
-                                    width: 1.5
-                                  )
-                                ),
-                                child: Center(
-                                  child: FittedBox(
-                                    fit: BoxFit.scaleDown,
-                                    child: Text(
-                                      _getMoneyText(shiftPay),
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.w700, 
-                                        fontSize: 14, 
-                                        color: Theme.of(context).colorScheme.primary 
-                                      ),
-                                    ),
-                                  ),
-                                ),
+                                width: 90, padding: const EdgeInsets.symmetric(vertical: 8),
+                                decoration: BoxDecoration(color: Colors.transparent, borderRadius: BorderRadius.circular(50), border: Border.all(color: Theme.of(context).colorScheme.primary, width: 1.5)),
+                                child: Center(child: FittedBox(fit: BoxFit.scaleDown, child: Text(_getMoneyText(shiftPay), style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14, color: Theme.of(context).colorScheme.primary)))),
                               ),
                             ],
                           ),
@@ -535,34 +238,21 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        heroTag: 'detailFab', // <--- FIXED: Added Unique Hero Tag
-        onPressed: () => _showShiftDialog(),
+        heroTag: 'detailFab',
+        onPressed: () => _openShiftModal(),
         label: const Text("Add Shift", style: TextStyle(fontWeight: FontWeight.bold)),
         icon: const Icon(CupertinoIcons.add),
         backgroundColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
         foregroundColor: primaryColor,
         elevation: 6,
-        shape: StadiumBorder(
-          side: BorderSide(color: primaryColor, width: 2.0)
-        ),
+        shape: StadiumBorder(side: BorderSide(color: primaryColor, width: 2.0)),
       ),
     );
   }
 
   Widget _buildStatPill(BuildContext context, String text) {
     final color = Theme.of(context).colorScheme.primary;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), 
-      decoration: BoxDecoration(
-        color: Colors.transparent, 
-        borderRadius: BorderRadius.circular(50), 
-        border: Border.all(color: color, width: 1.5) 
-      ), 
-      child: Text(
-        text, 
-        style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)
-      )
-    );
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Colors.transparent, borderRadius: BorderRadius.circular(50), border: Border.all(color: color, width: 1.5)), child: Text(text, style: TextStyle(color: color, fontWeight: FontWeight.bold, fontSize: 12)));
   }
 
   Widget _buildTag(String text, Color color, bool isDark) {
@@ -570,21 +260,6 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
   }
 
   Widget _buildHolidayTag(BuildContext context, String text) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), 
-      decoration: BoxDecoration(
-        color: Colors.transparent, 
-        borderRadius: BorderRadius.circular(50),
-        border: Border.all(color: Colors.orange, width: 1)
-      ), 
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(Icons.star, size: 10, color: Colors.orange),
-          const SizedBox(width: 4),
-          Text(text, style: const TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.bold)),
-        ],
-      )
-    );
+    return Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2), decoration: BoxDecoration(color: Colors.transparent, borderRadius: BorderRadius.circular(50), border: Border.all(color: Colors.orange, width: 1)), child: Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.star, size: 10, color: Colors.orange), const SizedBox(width: 4), Text(text, style: const TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.bold))]));
   }
 }
