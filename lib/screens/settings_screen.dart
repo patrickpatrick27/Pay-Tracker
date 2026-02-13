@@ -5,7 +5,7 @@ import '../services/update_service.dart';
 import '../utils/helpers.dart';
 import '../widgets/custom_pickers.dart';
 import '../services/data_manager.dart';
-import '../services/audio_service.dart'; // NEW: Import AudioService
+import '../services/audio_service.dart'; 
 
 class SettingsScreen extends StatefulWidget {
   final bool isDarkMode;
@@ -14,11 +14,13 @@ class SettingsScreen extends StatefulWidget {
   final String currencySymbol;
   final TimeOfDay shiftStart;
   final TimeOfDay shiftEnd;
+  final bool snapToGrid; // New: Smart Rounding Setting
   
   final Function({
     bool? isDark, bool? is24h, bool? hideMoney, 
     String? currencySymbol, TimeOfDay? shiftStart, TimeOfDay? shiftEnd,
-    bool? enableLate, bool? enableOt, double? defaultRate 
+    bool? enableLate, bool? enableOt, double? defaultRate,
+    bool? snapToGrid // New: Callback parameter
   }) onUpdate;
 
   final VoidCallback onDeleteAll; 
@@ -34,6 +36,7 @@ class SettingsScreen extends StatefulWidget {
     required this.currencySymbol,
     required this.shiftStart,
     required this.shiftEnd,
+    required this.snapToGrid, // Required
     required this.onUpdate,
     required this.onDeleteAll,
     required this.onExportReport,
@@ -51,7 +54,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   late TextEditingController _rateController; 
   final List<String> _currencies = ['₱', '\$', '€', '£', '¥', '₩', '₹', 'Rp'];
   bool _updateAvailable = false; 
-  bool _isMuted = false; // NEW: Local state for mute
+  bool _isMuted = false; 
 
   @override
   void initState() {
@@ -62,7 +65,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     final manager = Provider.of<DataManager>(context, listen: false);
     _rateController = TextEditingController(text: manager.defaultHourlyRate.toStringAsFixed(0));
     
-    // NEW: Load initial mute state
+    // Load initial mute state from Service
     _isMuted = AudioService().isMuted;
 
     _checkForUpdates();
@@ -94,9 +97,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
-  // --- SEPARATE DELETE ACTIONS ---
+  // --- DELETE ACTIONS ---
 
   void _confirmClearLocal(BuildContext context) {
+    AudioService().playClick();
     showConfirmationDialog(
       context: context, 
       title: "Clear Device Data?", 
@@ -112,6 +116,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   void _confirmDeleteCloud(BuildContext context) {
+    AudioService().playClick();
     showConfirmationDialog(
       context: context, 
       title: "Delete Cloud Backup?", 
@@ -186,6 +191,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
           
           const SizedBox(height: 20),
           _buildSectionHeader("CALCULATIONS"),
+          
           // --- GLOBAL BASE PAY INPUT ---
           ListTile(
             tileColor: bg,
@@ -208,9 +214,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
               ),
             ),
           ),
+          
+          // --- NEW: SMART ROUNDING ---
+          SwitchListTile(
+            title: const Text("Smart Rounding (30m)"),
+            subtitle: const Text("7:47 → 8:00 • 5:03 → 5:00"),
+            secondary: const Icon(Icons.av_timer, color: Colors.purple),
+            value: widget.snapToGrid,
+            tileColor: bg,
+            onChanged: (val) => widget.onUpdate(snapToGrid: val),
+          ),
+
           SwitchListTile(
             title: const Text("Deduct Late Minutes"),
             subtitle: const Text("Subtract pay for late arrivals"),
+            secondary: const Icon(Icons.timer_off, color: Colors.orange),
             value: manager.enableLateDeductions,
             tileColor: bg,
             onChanged: (val) => widget.onUpdate(enableLate: val),
@@ -218,13 +236,13 @@ class _SettingsScreenState extends State<SettingsScreen> {
           SwitchListTile(
             title: const Text("Calculate Overtime"),
             subtitle: const Text("Add 1.25x for hours after shift end"),
+            secondary: const Icon(Icons.more_time, color: Colors.green),
             value: manager.enableOvertime,
             tileColor: bg,
             onChanged: (val) => widget.onUpdate(enableOt: val),
           ),
 
           const SizedBox(height: 20),
-          // --- NEW: SOUNDS SECTION ---
           _buildSectionHeader("SOUNDS"),
           SwitchListTile(
             title: const Text("Mute Sound Effects"),
@@ -236,6 +254,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
             value: _isMuted,
             tileColor: bg,
             onChanged: (val) async {
+              AudioService().playClick();
               await AudioService().toggleMute();
               setState(() {
                 _isMuted = val;
@@ -273,7 +292,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ) 
                 : null,
             onTap: () { 
-              // UPDATED: Use AudioService to respect mute setting
               AudioService().playClick(); 
               GithubUpdateService.checkForUpdate(context, showNoUpdateMsg: true); 
             },
@@ -283,21 +301,26 @@ class _SettingsScreenState extends State<SettingsScreen> {
             leading: const Icon(Icons.description, color: Colors.purple), 
             title: const Text("Copy Text Report"), 
             subtitle: const Text("For humans (WhatsApp/Email)", style: TextStyle(fontSize: 10)), 
-            onTap: widget.onExportReport
+            onTap: () {
+               AudioService().playClick();
+               widget.onExportReport();
+            }
           ),
           ListTile(
             tileColor: bg, 
             leading: const Icon(Icons.save, color: Colors.teal), 
             title: const Text("Backup Data (JSON)"), 
             subtitle: const Text("For switching apps (Save this code!)", style: TextStyle(fontSize: 10)), 
-            onTap: widget.onBackup
+            onTap: () {
+              AudioService().playClick();
+              widget.onBackup();
+            }
           ),
           ListTile(
             tileColor: bg, 
             leading: const Icon(Icons.restore, color: Colors.orange), 
             title: const Text("Restore Backup"), 
             onTap: () { 
-              // UPDATED: Use AudioService
               AudioService().playClick(); 
               _showRestoreDialog(context); 
             }
@@ -338,7 +361,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       tileColor: Theme.of(context).cardColor, title: Text(title),
       trailing: Container(padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6), decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary.withOpacity(0.1), borderRadius: BorderRadius.circular(8)), child: Text(formatTime(context, current, widget.use24HourFormat), style: TextStyle(fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary))),
       onTap: () async { 
-        // UPDATED: Use AudioService
         AudioService().playClick(); 
         final t = await showFastTimePicker(context, current, widget.use24HourFormat); 
         if (t != null) onSelect(t); 

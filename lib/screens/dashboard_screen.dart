@@ -32,6 +32,7 @@ class PayPeriodListScreen extends StatefulWidget {
     bool? enableLate,
     bool? enableOt,
     double? defaultRate,
+    bool? snapToGrid, // Added callback param
   }) onUpdateSettings;
 
   const PayPeriodListScreen({
@@ -160,7 +161,7 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
       if (localJson != cloudJson && mounted) {
         ScaffoldMessenger.of(context).hideCurrentSnackBar();
-        // === REFACTORED: Using extracted Widget ===
+        
         showDialog(
           context: context,
           barrierDismissible: false,
@@ -248,6 +249,9 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
 
   void _openSettings() {
     AudioService().playClick(); 
+    // Get manager to read current snap setting
+    final manager = Provider.of<DataManager>(context, listen: false);
+
     Navigator.push(context, MaterialPageRoute(builder: (_) => SettingsScreen(
       isDarkMode: widget.isDarkMode,
       use24HourFormat: widget.use24HourFormat,
@@ -255,11 +259,34 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
       currencySymbol: _currencySymbol,
       shiftStart: widget.shiftStart,
       shiftEnd: widget.shiftEnd,
-      onUpdate: ({isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd, enableLate, enableOt, defaultRate}) async {
+      snapToGrid: manager.snapToGrid, // Pass current setting
+      
+      onUpdate: ({
+        isDark, is24h, hideMoney, currencySymbol, shiftStart, shiftEnd, 
+        enableLate, enableOt, defaultRate, snapToGrid // Recieve update
+      }) async {
         final prefs = await SharedPreferences.getInstance();
-        if (hideMoney != null) { setState(() => _hideMoney = hideMoney); prefs.setBool('setting_hide_money', hideMoney); }
-        if (currencySymbol != null) { setState(() => _currencySymbol = currencySymbol); prefs.setString('setting_currency_symbol', currencySymbol); }
-        Provider.of<DataManager>(context, listen: false).updateSettings(isDark: isDark, is24h: is24h, shiftStart: shiftStart, shiftEnd: shiftEnd, enableLate: enableLate, enableOt: enableOt, defaultRate: defaultRate);
+        
+        if (hideMoney != null) { 
+          setState(() => _hideMoney = hideMoney); 
+          prefs.setBool('setting_hide_money', hideMoney); 
+        }
+        if (currencySymbol != null) { 
+          setState(() => _currencySymbol = currencySymbol); 
+          prefs.setString('setting_currency_symbol', currencySymbol); 
+        }
+        
+        // Update DataManager with all settings including snapToGrid
+        Provider.of<DataManager>(context, listen: false).updateSettings(
+          isDark: isDark, 
+          is24h: is24h, 
+          shiftStart: shiftStart, 
+          shiftEnd: shiftEnd, 
+          enableLate: enableLate, 
+          enableOt: enableOt, 
+          defaultRate: defaultRate,
+          snapToGrid: snapToGrid,
+        );
       },
       onDeleteAll: () async { setState(() { periods = []; }); _saveData(); },
       onExportReport: () {}, onBackup: () {}, onRestore: (s) {},
@@ -396,7 +423,17 @@ class _PayPeriodListScreenState extends State<PayPeriodListScreen> {
                   itemCount: periods.length,
                   itemBuilder: (context, index) {
                     final p = periods[index];
-                    final totalPay = p.getTotalPay(widget.shiftStart, widget.shiftEnd, hourlyRate: dataManager.defaultHourlyRate, enableLate: dataManager.enableLateDeductions, enableOt: dataManager.enableOvertime);
+                    
+                    // UPDATED: Calculate Total Pay with NEW Snap Setting
+                    final totalPay = p.getTotalPay(
+                      widget.shiftStart, 
+                      widget.shiftEnd, 
+                      hourlyRate: dataManager.defaultHourlyRate, 
+                      enableLate: dataManager.enableLateDeductions, 
+                      enableOt: dataManager.enableOvertime,
+                      snapToGrid: dataManager.snapToGrid // <--- PASSING THE SETTING HERE
+                    );
+
                     return Dismissible(
                       key: Key(p.id),
                       direction: DismissDirection.endToStart,

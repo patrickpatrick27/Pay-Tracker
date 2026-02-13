@@ -7,7 +7,7 @@ import '../utils/helpers.dart';
 import '../utils/calculations.dart';
 import '../services/data_manager.dart'; 
 import '../services/audio_service.dart';
-import '../widgets/shift_form_sheet.dart'; // NEW IMPORT
+import '../widgets/shift_form_sheet.dart'; 
 
 class PeriodDetailScreen extends StatefulWidget {
   final PayPeriod period;
@@ -68,16 +68,25 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
     return "${hours.toStringAsFixed(1)}h";
   }
 
-  double _calculateShiftPay(Shift s, double hourlyRate) {
+  double _calculateShiftPay(Shift s, double hourlyRate, bool snapToGrid) {
     if (s.isManualPay) return s.manualAmount;
-    double regHours = s.getRegularHours(widget.shiftStart, widget.shiftEnd, isLateEnabled: widget.enableLate, roundEndTime: true);
-    double otHours = widget.enableOt ? s.getOvertimeHours(widget.shiftStart, widget.shiftEnd) : 0.0;
+
+    // Updated to match Model Logic (Late = Exact, Early = Snapped)
+    double regHours = s.getRegularHours(
+      widget.shiftStart, 
+      widget.shiftEnd, 
+      isLateEnabled: widget.enableLate, 
+      snapToGrid: snapToGrid
+    );
+    
+    double otHours = widget.enableOt ? s.getOvertimeHours(widget.shiftStart, widget.shiftEnd, snapToGrid: snapToGrid) : 0.0;
+    
     double pay = (regHours * hourlyRate) + (otHours * hourlyRate * 1.25);
-    if (widget.enableLate) {
-      int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
-      if (lateMins > 0) pay -= (lateMins / 60.0) * hourlyRate;
+
+    if (s.isHoliday && s.holidayMultiplier > 0) {
+      pay += pay * (s.holidayMultiplier / 100.0);
     }
-    if (s.isHoliday && s.holidayMultiplier > 0) pay += pay * (s.holidayMultiplier / 100.0);
+    
     return pay > 0 ? pay : 0.0;
   }
 
@@ -96,7 +105,6 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
 
     final isDark = Theme.of(context).brightness == Brightness.dark;
     
-    // === REFACTORED: Using extracted Widget ===
     final result = await showModalBottomSheet(
       context: context, 
       isScrollControlled: true, 
@@ -135,13 +143,26 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
   Widget build(BuildContext context) {
     final dataManager = Provider.of<DataManager>(context);
     final double hourlyRate = dataManager.defaultHourlyRate;
+    final bool snapToGrid = dataManager.snapToGrid; 
+    
     final bool isDark = Theme.of(context).brightness == Brightness.dark;
     final Color subTextColor = isDark ? Colors.grey[400]! : Colors.grey[600]!;
     final Color primaryColor = Theme.of(context).colorScheme.primary;
     
-    final double totalPay = widget.period.getTotalPay(widget.shiftStart, widget.shiftEnd, hourlyRate: hourlyRate, enableLate: widget.enableLate, enableOt: widget.enableOt);
-    final double totalReg = widget.period.getTotalRegularHours(widget.shiftStart, widget.shiftEnd);
-    final double totalOT = widget.enableOt ? widget.period.getTotalOvertimeHours(widget.shiftStart, widget.shiftEnd) : 0.0;
+    final double totalPay = widget.period.getTotalPay(
+      widget.shiftStart, 
+      widget.shiftEnd, 
+      hourlyRate: hourlyRate, 
+      enableLate: widget.enableLate, 
+      enableOt: widget.enableOt,
+      snapToGrid: snapToGrid,
+    );
+
+    final double totalReg = widget.period.shifts.fold(0.0, (sum, s) => 
+        sum + s.getRegularHours(widget.shiftStart, widget.shiftEnd, snapToGrid: snapToGrid, isLateEnabled: widget.enableLate));
+        
+    final double totalOT = widget.enableOt ? widget.period.shifts.fold(0.0, (sum, s) => 
+        sum + s.getOvertimeHours(widget.shiftStart, widget.shiftEnd, snapToGrid: snapToGrid)) : 0.0;
 
     return Scaffold(
       appBar: AppBar(title: Text(widget.period.name, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16))),
@@ -185,11 +206,15 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                   itemCount: widget.period.shifts.length,
                   itemBuilder: (ctx, i) {
                     final s = widget.period.shifts[i];
+                    
                     int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, widget.shiftStart);
-                    double lateHours = lateMins / 60.0;
-                    double regHours = s.getRegularHours(widget.shiftStart, widget.shiftEnd, isLateEnabled: widget.enableLate, roundEndTime: false);
-                    double otHours = s.getOvertimeHours(widget.shiftStart, widget.shiftEnd);
-                    double shiftPay = _calculateShiftPay(s, hourlyRate);
+                    
+                    double regHours = s.getRegularHours(widget.shiftStart, widget.shiftEnd, isLateEnabled: widget.enableLate, snapToGrid: snapToGrid);
+                    double otHours = s.getOvertimeHours(widget.shiftStart, widget.shiftEnd, snapToGrid: snapToGrid);
+                    double shiftPay = _calculateShiftPay(s, hourlyRate, snapToGrid);
+                    
+                    // Lateness logic for Display Tag (independent of pay)
+                    bool isLate = widget.enableLate && lateMins > 0;
 
                     return Dismissible(
                       key: Key(s.id),
@@ -215,7 +240,8 @@ class _PeriodDetailScreenState extends State<PeriodDetailScreen> with TickerProv
                                       Wrap(spacing: 6, runSpacing: 4, children: [
                                           _buildTag("Reg: ${_formatDuration(regHours)}", Colors.grey, isDark),
                                           if (widget.enableOt && otHours > 0) _buildTag("OT: ${_formatDuration(otHours)}", Colors.blue, isDark),
-                                          if (widget.enableLate && lateHours > 0) _buildTag("Late: ${_formatDuration(lateHours)}", Colors.redAccent, isDark),
+                                          // Display Late tag based on Raw Minutes
+                                          if (isLate) _buildTag("Late: ${lateMins}m", Colors.redAccent, isDark),
                                           if (s.isHoliday && s.holidayMultiplier > 0) _buildHolidayTag(context, "+${s.holidayMultiplier.toStringAsFixed(0)}% Pay"),
                                       ]),
                                     ]

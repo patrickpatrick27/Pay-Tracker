@@ -28,7 +28,6 @@ class Shift {
   Map<String, dynamic> toJson() => {
     'id': id,
     'date': date.toIso8601String(),
-    // We standardize on 'timeIn' for the future, but we can read both.
     'timeIn': '${rawTimeIn.hour}:${rawTimeIn.minute}',
     'timeOut': '${rawTimeOut.hour}:${rawTimeOut.minute}',
     'isManualPay': isManualPay,
@@ -39,96 +38,110 @@ class Shift {
   };
 
   factory Shift.fromJson(Map<String, dynamic> json) {
-    // 1. SAFE TIME PARSER
     TimeOfDay parseTime(String? s) {
       if (s == null || !s.contains(':')) return const TimeOfDay(hour: 8, minute: 0);
       final parts = s.split(':');
       return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
     }
 
-    // 2. SAFE NUMBER PARSER (Handles Int vs Double)
     double safeDouble(dynamic val, double fallback) {
       if (val == null) return fallback;
       if (val is num) return val.toDouble();
       return double.tryParse(val.toString()) ?? fallback;
     }
 
-    // 3. THE KEY FIX: Look for 'timeIn' (New) OR 'rawTimeIn' (Old)
     String? inTimeStr = json['timeIn'] ?? json['rawTimeIn'];
     String? outTimeStr = json['timeOut'] ?? json['rawTimeOut'];
 
     return Shift(
       id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
       date: DateTime.parse(json['date']),
-      
-      // Use the resolved time strings
       rawTimeIn: parseTime(inTimeStr),
       rawTimeOut: parseTime(outTimeStr),
-      
       isManualPay: json['isManualPay'] ?? false,
       manualAmount: safeDouble(json['manualAmount'], 0.0),
       remarks: json['remarks'] ?? '',
-      
       isHoliday: json['isHoliday'] ?? false,
       holidayMultiplier: safeDouble(json['holidayMultiplier'], 30.0),
     );
   }
 
-  // --- SMART LOGIC (Undertime & Lunch Fix) ---
-
-  DateTime get _startDateTime {
-    return DateTime(date.year, date.month, date.day, rawTimeIn.hour, rawTimeIn.minute);
+  // --- TIME HELPERS ---
+  
+  TimeOfDay _snapTime(TimeOfDay raw) {
+    int totalMinutes = raw.hour * 60 + raw.minute;
+    int roundedMinutes = (totalMinutes / 30).round() * 30;
+    int newHour = (roundedMinutes ~/ 60) % 24;
+    int newMinute = roundedMinutes % 60;
+    return TimeOfDay(hour: newHour, minute: newMinute);
   }
 
-  DateTime get _endDateTime {
-    DateTime start = _startDateTime;
-    DateTime end = DateTime(date.year, date.month, date.day, rawTimeOut.hour, rawTimeOut.minute);
+  int _toMins(TimeOfDay t) => t.hour * 60 + t.minute;
 
-    // FIX: Only treat as "Next Day" if Out is strictly BEFORE In.
-    if (end.isBefore(start)) {
-      end = end.add(const Duration(days: 1));
-    }
-    return end;
+  DateTime _getDateTime(TimeOfDay t) {
+    return DateTime(date.year, date.month, date.day, t.hour, t.minute);
   }
 
-  double getRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool isLateEnabled = true, bool roundEndTime = true}) {
+  double getRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool isLateEnabled = true, bool snapToGrid = true}) {
     if (isManualPay) return 0.0;
 
-    // Adjust Start (Late Logic)
-    DateTime standardStart = DateTime(date.year, date.month, date.day, shiftStart.hour, shiftStart.minute);
-    DateTime effectiveStart = _startDateTime;
+    // 1. DETERMINE EFFECTIVE START TIME
+    TimeOfDay effectiveIn = rawTimeIn;
     
-    // Only apply grace if late enabled or arrived late
-    if (!isLateEnabled && effectiveStart.isAfter(standardStart)) {
-      effectiveStart = standardStart; 
+    if (snapToGrid) {
+      // Smart Logic: Snap only if ON TIME or EARLY.
+      if (isLateEnabled && _toMins(rawTimeIn) > _toMins(shiftStart)) {
+         effectiveIn = rawTimeIn; // Exact time (Late)
+      } else {
+         effectiveIn = _snapTime(rawTimeIn); // Snap (Early/OnTime)
+      }
     }
 
-    // Adjust End (Undertime Logic)
+    // 2. DETERMINE EFFECTIVE END TIME
+    TimeOfDay effectiveOut = snapToGrid ? _snapTime(rawTimeOut) : rawTimeOut;
+
+    // 3. CONVERT TO DATETIME
+    DateTime startDt = DateTime(date.year, date.month, date.day, effectiveIn.hour, effectiveIn.minute);
+    DateTime endDt = DateTime(date.year, date.month, date.day, effectiveOut.hour, effectiveOut.minute);
+    
+    // Handle Next Day Out
+    if (endDt.isBefore(startDt)) {
+      endDt = endDt.add(const Duration(days: 1));
+    }
+
+    // 4. DEFINE SHIFT BOUNDARIES
+    DateTime standardStart = DateTime(date.year, date.month, date.day, shiftStart.hour, shiftStart.minute);
     DateTime standardEnd = DateTime(date.year, date.month, date.day, shiftEnd.hour, shiftEnd.minute);
+    
+    // Handle overnight standard shift
     if (standardEnd.isBefore(standardStart)) {
-      standardEnd = standardEnd.add(const Duration(days: 1));
+       standardEnd = standardEnd.add(const Duration(days: 1));
     }
 
-    DateTime effectiveEnd = _endDateTime;
-
-    // Cap at Standard End
-    if (effectiveEnd.isAfter(standardEnd)) {
-      effectiveEnd = standardEnd;
+    // --- NEW LOGIC: STRICT START TIME ---
+    // Even if you arrive at 7:00 AM for an 8:00 AM shift, pay starts at 8:00 AM.
+    if (startDt.isBefore(standardStart)) {
+      startDt = standardStart;
     }
 
-    Duration regularDuration = effectiveEnd.difference(effectiveStart);
-    double hours = regularDuration.inMinutes / 60.0;
+    // Cap at Shift End (Anything after is OT)
+    if (endDt.isAfter(standardEnd)) {
+      endDt = standardEnd;
+    }
 
-    // AUTOMATIC UNPAID LUNCH: If shift > 6 hours, deduct 1 hour.
+    // 5. CALCULATE DURATION
+    Duration duration = endDt.difference(startDt);
+    double hours = duration.inMinutes / 60.0;
+
+    // 6. AUTOMATIC LUNCH DEDUCTION
     if (hours > 6.0) {
       hours -= 1.0;
     }
 
-    if (hours < 0) return 0.0; 
-    return hours;
+    return hours > 0 ? hours : 0.0;
   }
 
-  double getOvertimeHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
+  double getOvertimeHours(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool snapToGrid = true}) {
     if (isManualPay) return 0.0;
 
     DateTime standardEnd = DateTime(date.year, date.month, date.day, shiftEnd.hour, shiftEnd.minute);
@@ -138,7 +151,13 @@ class Shift {
       standardEnd = standardEnd.add(const Duration(days: 1));
     }
 
-    DateTime actualEnd = _endDateTime;
+    TimeOfDay tOut = snapToGrid ? _snapTime(rawTimeOut) : rawTimeOut;
+    DateTime actualEnd = DateTime(date.year, date.month, date.day, tOut.hour, tOut.minute);
+    
+    DateTime startDt = _getDateTime(rawTimeIn);
+    if (actualEnd.isBefore(startDt)) {
+       actualEnd = actualEnd.add(const Duration(days: 1));
+    }
 
     if (actualEnd.isAfter(standardEnd)) {
       Duration ot = actualEnd.difference(standardEnd);
@@ -193,15 +212,12 @@ class PayPeriod {
     name = "${DateFormat('MMM d, yyyy').format(start)} - ${DateFormat('MMM d, yyyy').format(end)}";
   }
 
-  double getTotalRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
-    return shifts.fold(0.0, (sum, s) => sum + s.getRegularHours(shiftStart, shiftEnd));
-  }
-
-  double getTotalOvertimeHours(TimeOfDay shiftStart, TimeOfDay shiftEnd) {
-    return shifts.fold(0.0, (sum, s) => sum + s.getOvertimeHours(shiftStart, shiftEnd));
-  }
-  
-  double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {double? hourlyRate, bool enableLate = true, bool enableOt = true}) {
+  double getTotalPay(TimeOfDay shiftStart, TimeOfDay shiftEnd, {
+    double? hourlyRate, 
+    bool enableLate = true, 
+    bool enableOt = true,
+    bool snapToGrid = true 
+  }) {
     double rate = hourlyRate ?? this.hourlyRate;
     double total = 0.0;
     
@@ -211,18 +227,13 @@ class PayPeriod {
         continue;
       }
 
-      double reg = s.getRegularHours(shiftStart, shiftEnd, isLateEnabled: enableLate);
-      double ot = enableOt ? s.getOvertimeHours(shiftStart, shiftEnd) : 0.0;
+      // Reg hours are now strictly clamped to start time
+      double reg = s.getRegularHours(shiftStart, shiftEnd, isLateEnabled: enableLate, snapToGrid: snapToGrid);
+      double ot = enableOt ? s.getOvertimeHours(shiftStart, shiftEnd, snapToGrid: snapToGrid) : 0.0;
       
       double dailyPay = (reg * rate) + (ot * rate * 1.25);
-
-      if (enableLate) {
-         int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, shiftStart);
-         if (lateMins > 0) {
-           dailyPay -= (lateMins / 60.0) * rate;
-         }
-      }
       
+      // Holiday Multiplier
       if (s.isHoliday && s.holidayMultiplier > 0) {
         dailyPay += dailyPay * (s.holidayMultiplier / 100.0);
       }
