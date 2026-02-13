@@ -77,9 +77,9 @@ class Shift {
   double getRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool isLateEnabled = true, bool roundEndTime = true}) {
     if (isManualPay) return 0.0;
 
-    // 1. Calculate Actual Work Duration
-    Duration worked = _endDateTime.difference(_startDateTime);
-    double workedHours = worked.inMinutes / 60.0;
+    // 1. Calculate Actual Work Duration (Just for check, not final calculation)
+    // Duration worked = _endDateTime.difference(_startDateTime);
+    // double workedHours = worked.inMinutes / 60.0;
 
     // 2. Adjust Start Time (Late Logic)
     DateTime standardStart = DateTime(date.year, date.month, date.day, shiftStart.hour, shiftStart.minute);
@@ -113,11 +113,15 @@ class Shift {
     Duration regularDuration = effectiveEnd.difference(effectiveStart);
     double hours = regularDuration.inMinutes / 60.0;
 
+    // --- NEW: AUTOMATIC UNPAID LUNCH DEDUCTION ---
+    // If the shift is longer than 6 hours, we assume a 1-hour unpaid break.
+    // Example: 8:00 AM to 5:00 PM = 9 hours -> becomes 8 hours.
+    if (hours > 6.0) {
+      hours -= 1.0;
+    }
+
     // 5. Safety Checks
     if (hours < 0) return 0.0; 
-    
-    // If they worked LESS than the regular shift (Undertime), 'hours' will naturally be lower (e.g. 3.0)
-    // If they worked MORE, the 'effectiveEnd' cap ensures this function returns max 8.0 (or whatever shift length is)
     
     return hours;
   }
