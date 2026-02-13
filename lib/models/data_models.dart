@@ -28,6 +28,7 @@ class Shift {
   Map<String, dynamic> toJson() => {
     'id': id,
     'date': date.toIso8601String(),
+    // We standardize on 'timeIn' for the future, but we can read both.
     'timeIn': '${rawTimeIn.hour}:${rawTimeIn.minute}',
     'timeOut': '${rawTimeOut.hour}:${rawTimeOut.minute}',
     'isManualPay': isManualPay,
@@ -38,25 +39,43 @@ class Shift {
   };
 
   factory Shift.fromJson(Map<String, dynamic> json) {
-    TimeOfDay parseTime(String s) {
+    // 1. SAFE TIME PARSER
+    TimeOfDay parseTime(String? s) {
+      if (s == null || !s.contains(':')) return const TimeOfDay(hour: 8, minute: 0);
       final parts = s.split(':');
       return TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
     }
 
+    // 2. SAFE NUMBER PARSER (Handles Int vs Double)
+    double safeDouble(dynamic val, double fallback) {
+      if (val == null) return fallback;
+      if (val is num) return val.toDouble();
+      return double.tryParse(val.toString()) ?? fallback;
+    }
+
+    // 3. THE KEY FIX: Look for 'timeIn' (New) OR 'rawTimeIn' (Old)
+    String? inTimeStr = json['timeIn'] ?? json['rawTimeIn'];
+    String? outTimeStr = json['timeOut'] ?? json['rawTimeOut'];
+
     return Shift(
-      id: json['id'],
+      id: json['id']?.toString() ?? DateTime.now().millisecondsSinceEpoch.toString(),
       date: DateTime.parse(json['date']),
-      rawTimeIn: parseTime(json['timeIn']),
-      rawTimeOut: parseTime(json['timeOut']),
+      
+      // Use the resolved time strings
+      rawTimeIn: parseTime(inTimeStr),
+      rawTimeOut: parseTime(outTimeStr),
+      
       isManualPay: json['isManualPay'] ?? false,
-      manualAmount: (json['manualAmount'] ?? 0.0).toDouble(),
+      manualAmount: safeDouble(json['manualAmount'], 0.0),
       remarks: json['remarks'] ?? '',
+      
       isHoliday: json['isHoliday'] ?? false,
-      holidayMultiplier: (json['holidayMultiplier'] ?? 30.0).toDouble(),
+      holidayMultiplier: safeDouble(json['holidayMultiplier'], 30.0),
     );
   }
 
-  // --- CRITICAL FIX: SMART DATE LOGIC ---
+  // --- SMART LOGIC (Undertime & Lunch Fix) ---
+
   DateTime get _startDateTime {
     return DateTime(date.year, date.month, date.day, rawTimeIn.hour, rawTimeIn.minute);
   }
@@ -66,8 +85,6 @@ class Shift {
     DateTime end = DateTime(date.year, date.month, date.day, rawTimeOut.hour, rawTimeOut.minute);
 
     // FIX: Only treat as "Next Day" if Out is strictly BEFORE In.
-    // Example 1 (Undertime): In 8:00 AM, Out 11:00 AM. 11 > 8. Same Day.
-    // Example 2 (Overnight): In 8:00 PM, Out 5:00 AM. 5 < 20. Next Day.
     if (end.isBefore(start)) {
       end = end.add(const Duration(days: 1));
     }
@@ -77,52 +94,37 @@ class Shift {
   double getRegularHours(TimeOfDay shiftStart, TimeOfDay shiftEnd, {bool isLateEnabled = true, bool roundEndTime = true}) {
     if (isManualPay) return 0.0;
 
-    // 1. Calculate Actual Work Duration (Just for check, not final calculation)
-    // Duration worked = _endDateTime.difference(_startDateTime);
-    // double workedHours = worked.inMinutes / 60.0;
-
-    // 2. Adjust Start Time (Late Logic)
+    // Adjust Start (Late Logic)
     DateTime standardStart = DateTime(date.year, date.month, date.day, shiftStart.hour, shiftStart.minute);
     DateTime effectiveStart = _startDateTime;
     
-    // If late deductions are ENABLED, we start counting from when they arrived.
-    // If late deductions are DISABLED, and they arrived late, we pretend they arrived at 8:00 (for pay purposes), 
-    // unless they arrived so late it's after the shift ended.
+    // Only apply grace if late enabled or arrived late
     if (!isLateEnabled && effectiveStart.isAfter(standardStart)) {
-      // Only apply grace if they actually arrived within the shift window
       effectiveStart = standardStart; 
     }
 
-    // 3. Adjust End Time (Undertime Logic)
-    // We compare Actual Out vs Standard Out
+    // Adjust End (Undertime Logic)
     DateTime standardEnd = DateTime(date.year, date.month, date.day, shiftEnd.hour, shiftEnd.minute);
-    // If standard end is before standard start (e.g. night shift 8pm-5am), move standard end to next day
     if (standardEnd.isBefore(standardStart)) {
       standardEnd = standardEnd.add(const Duration(days: 1));
     }
 
     DateTime effectiveEnd = _endDateTime;
 
-    // Cap the "Regular Hours" at the Standard End time.
-    // Anything after standardEnd is Overtime, not Regular.
+    // Cap at Standard End
     if (effectiveEnd.isAfter(standardEnd)) {
       effectiveEnd = standardEnd;
     }
 
-    // 4. Calculate Duration
     Duration regularDuration = effectiveEnd.difference(effectiveStart);
     double hours = regularDuration.inMinutes / 60.0;
 
-    // --- NEW: AUTOMATIC UNPAID LUNCH DEDUCTION ---
-    // If the shift is longer than 6 hours, we assume a 1-hour unpaid break.
-    // Example: 8:00 AM to 5:00 PM = 9 hours -> becomes 8 hours.
+    // AUTOMATIC UNPAID LUNCH: If shift > 6 hours, deduct 1 hour.
     if (hours > 6.0) {
       hours -= 1.0;
     }
 
-    // 5. Safety Checks
     if (hours < 0) return 0.0; 
-    
     return hours;
   }
 
@@ -132,19 +134,16 @@ class Shift {
     DateTime standardEnd = DateTime(date.year, date.month, date.day, shiftEnd.hour, shiftEnd.minute);
     DateTime standardStart = DateTime(date.year, date.month, date.day, shiftStart.hour, shiftStart.minute);
     
-    // Handle overnight standard shift
     if (standardEnd.isBefore(standardStart)) {
       standardEnd = standardEnd.add(const Duration(days: 1));
     }
 
     DateTime actualEnd = _endDateTime;
 
-    // Overtime is simply: Did you stay past the standard end?
     if (actualEnd.isAfter(standardEnd)) {
       Duration ot = actualEnd.difference(standardEnd);
       return ot.inMinutes / 60.0;
     }
-    
     return 0.0;
   }
 }
@@ -155,7 +154,7 @@ class PayPeriod {
   DateTime start;
   DateTime end;
   DateTime lastEdited;
-  double hourlyRate; // Default 50.0
+  double hourlyRate;
   List<Shift> shifts;
 
   PayPeriod({
@@ -184,7 +183,7 @@ class PayPeriod {
       name: json['name'],
       start: DateTime.parse(json['start']),
       end: DateTime.parse(json['end']),
-      lastEdited: DateTime.parse(json['lastEdited']),
+      lastEdited: json['lastEdited'] != null ? DateTime.parse(json['lastEdited']) : DateTime.now(),
       hourlyRate: (json['hourlyRate'] ?? 50.0).toDouble(),
       shifts: (json['shifts'] as List).map((s) => Shift.fromJson(s)).toList(),
     );
@@ -215,10 +214,8 @@ class PayPeriod {
       double reg = s.getRegularHours(shiftStart, shiftEnd, isLateEnabled: enableLate);
       double ot = enableOt ? s.getOvertimeHours(shiftStart, shiftEnd) : 0.0;
       
-      // Base Pay
       double dailyPay = (reg * rate) + (ot * rate * 1.25);
 
-      // Late Deductions (Minute-by-minute)
       if (enableLate) {
          int lateMins = PayrollCalculator.calculateLateMinutes(s.rawTimeIn, shiftStart);
          if (lateMins > 0) {
@@ -226,7 +223,6 @@ class PayPeriod {
          }
       }
       
-      // Holiday/Double Pay Multiplier
       if (s.isHoliday && s.holidayMultiplier > 0) {
         dailyPay += dailyPay * (s.holidayMultiplier / 100.0);
       }
